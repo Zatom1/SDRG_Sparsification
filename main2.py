@@ -162,7 +162,7 @@ def generate_arbitrary_graph(size, num_clusters, p_in, p_out):
     return G #, mu_arr, lambda_arr
     
     
-def sdrg_step(G, decimated_sites, visualizeStep = False):
+def sdrg_step(G, decimated_sites = [], visualizeStep = False):
     n_nodes = G.numberOfNodes()
     healing_factor = G.getNodeAttribute("mu", float)
     components = G.getNodeAttribute("components", str)

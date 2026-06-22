@@ -11,13 +11,11 @@ import pandas as pd
 import networkx as nx
 #import matplotlib as plt
 import networkit as nk
-from networkit import vizbridges
 import time
 import matplotlib.pyplot as plt
 
 np.random.seed(1)
-
-#G = nx.partial_duplication_graph(50, 4, 0.4, 0.6)
+    
 def translate_Neil_NP_to_graph(filename='inputs_L10_pbcTrue_h0-1.0_j0-1.0_seed1.npz'):
     
     with np.load(filename) as data:
@@ -36,24 +34,26 @@ def translate_Neil_NP_to_graph(filename='inputs_L10_pbcTrue_h0-1.0_j0-1.0_seed1.
         
         #init mu values
         healing_factor = G.attachNodeAttribute("mu", float)
+        components = G.attachNodeAttribute("components", str)
         
         for i in range(len(bonds)):
             G.addEdge(bonds[i,0], bonds[i,1])
             J = math.exp(-1*kappa[i])
             G.setWeight(bonds[i,0], bonds[i,1], J)
-            print(f"J = {J}")
+            #print(f"J = {J}")
         
         for u in G.iterNodes():
             is_active[u] = False
             h = math.exp(-1*r[u])
             healing_factor[u] = h
-            print(f"h = {h}")
+            components[u] = f"{u}"
+            #print(f"h = {h}")
         
         visualize(G)
         return G
         
         print(bonds)
-def generate_square_lattice(width, height, torus = True, visualize_on=False, disordered_mu = False, constant_mu = 1.0, disordered_lambda=False, constant_lambda = 0.6):
+def generate_square_lattice(width, height, torus = True, visualize_on=False, disordered_mu = False, constant_mu = 1.0, disordered_lambda=False, constant_lambda = 0.8):
     G = nk.graph.Graph(n=width*height, weighted = True, edgesIndexed=True)
     
     if not torus:
@@ -108,19 +108,20 @@ def generate_square_lattice(width, height, torus = True, visualize_on=False, dis
     
     #init mu values
     healing_factor = G.attachNodeAttribute("mu", float)
-
+    components = G.attachNodeAttribute("components", str)
     #add disorder to healing values too if desired
     if disordered_mu:
         for u in G.iterNodes():
             mu = np.random.random()
             healing_factor[u] = mu
             is_active[u] = 0
-            
+            components[u] = f"{u}"
     else:
         for u in G.iterNodes():
             healing_factor[u] = constant_mu
             is_active[u] = 0
-            
+            components[u] = f"{u}"
+    
     print("done!")
         
     return G
@@ -161,13 +162,17 @@ def generate_arbitrary_graph(size, num_clusters, p_in, p_out):
     return G #, mu_arr, lambda_arr
     
     
-def sdrg_step(G, visualizeStep = False):
+def sdrg_step(G, decimated_sites, visualizeStep = False):
     n_nodes = G.numberOfNodes()
     healing_factor = G.getNodeAttribute("mu", float)
+    components = G.getNodeAttribute("components", str)
     is_active = G.getNodeAttribute("active", int)
     if n_nodes == 1:
         print("Network is fully sparsified")
-        return G
+        last_site = [u for u in G.iterNodes()]
+        print(last_site)
+        decimated_sites = np.append(decimated_sites, components[last_site[0]])
+        return G, decimated_sites
     
     mu_arr = np.array([np.array([healing_factor[u], u]).T for u in G.iterNodes()])
     lambda_arr = np.array([np.array([G.weight(u,v), u, v]).T for u,v in G.iterEdges()])
@@ -177,7 +182,7 @@ def sdrg_step(G, visualizeStep = False):
         
     max_mu_lambda_index = np.argmax(np.concat((mu_arr[:,0], lambda_arr[:,0])))
     #print(max_mu_lambda_index)
-    if max_mu_lambda_index > n_nodes-1: #true iff biggest value is a transmittal rate
+    if max_mu_lambda_index > n_nodes-1: #true iff biggest value is a lambda
         edge_to_decimate = lambda_arr[max_mu_lambda_index-n_nodes, 1:] #np list of length 2
         
         #union the two sets containing neighbors of u and v
@@ -186,16 +191,17 @@ def sdrg_step(G, visualizeStep = False):
         #neighbors_checked = set(())
         u = edge_to_decimate[0]
         v = edge_to_decimate[1]
-        print(f"decimating edge {edge_to_decimate} with lambda = {G.weight(u,v)}")
+        #print(f"decimating edge {edge_to_decimate} with lambda = {G.weight(u,v)}")
 
         k = G.addNode() # returns new node id, so k = new node id
         
         
         #use log and exp to convert mults and divides to adds and substracts
-        h_k = math.exp(math.log(healing_factor[u]) + math.log(healing_factor[v]) - math.log(G.weight(u,v)))
+        h_k = (healing_factor[u]*healing_factor[v])/(G.weight(u,v))#math.exp(math.log(healing_factor[u]) + math.log(healing_factor[v]) - math.log(G.weight(u,v)))
         #np.append(mu_arr, h_k)
         
         healing_factor[k] = h_k
+        components[k] = f"{components[u]}_{components[v]}"
         is_active[k] = 0
         
         for neighbor in pair_neighborhood:
@@ -213,7 +219,7 @@ def sdrg_step(G, visualizeStep = False):
         G.removeNode(v)
         #mu_arr = mu_arr[mu_arr != u and mu_arr != v]
         
-        print(f"decimated edge between nodes {u} and {v}")
+        print(f"decimated edge between nodes {u} and {v} to create node {k} with components {components[k]}")
         
         
         #print(edge_to_decimate)
@@ -222,7 +228,7 @@ def sdrg_step(G, visualizeStep = False):
     else: #true iff biggest val is a mu
         
         site_to_decimate = mu_arr[max_mu_lambda_index,1]
-        print(f"decimating site {site_to_decimate} with mu = {healing_factor[site_to_decimate]}")
+        #print(f"decimating site {site_to_decimate} with mu = {healing_factor[site_to_decimate]}")
         neighborhood = {u for u in G.iterNeighbors(site_to_decimate)}
         neighbors_checked = {-1}
         neighbors_checked.remove(-1)
@@ -241,7 +247,9 @@ def sdrg_step(G, visualizeStep = False):
                     kappa_ik = -math.log(G.weight(site_to_decimate, other_neighbor))
                     kappa_ij = -math.log(G.weight(neighbor, site_to_decimate))
                     
-                    new_weight = max(J_jk, math.exp(kappa_ik + kappa_ij - r_hi))
+                    a = (G.weight(site_to_decimate, other_neighbor)*G.weight(neighbor, site_to_decimate))/healing_factor[site_to_decimate]
+                    
+                    new_weight = max(J_jk, a)#math.exp(kappa_ik + kappa_ij - r_hi))
                     
                     #G.removeEdge(neighbor, other_neighbor)
                     add_success = G.addEdge(neighbor, other_neighbor, new_weight, checkMultiEdge = True)
@@ -255,15 +263,31 @@ def sdrg_step(G, visualizeStep = False):
             
             neighbors_checked.add(neighbor)
             #np.append(neighbors_checked, neighbor)
+        decimated_sites = np.append(decimated_sites, components[site_to_decimate])
+        print(f"decimated site {site_to_decimate} with components {components[site_to_decimate]}")
         G.removeNode(site_to_decimate)
         
         
         
-        print(f"decimated site {site_to_decimate}")
+        
     #nk.graphio.writeGraph(G, f"network_{time.time_ns()}_T.gml", nk.Format.GML)
     if visualizeStep:
         visualize(G)
-    return G
+    return G, decimated_sites
+
+def get_neil_output(G):
+    decimated_sites = []
+    for i in range(G.numberOfNodes()):
+        G, decimated_sites = sdrg_step(G, decimated_sites, visualizeStep=False)
+        
+    #print(decimated_sites)
+    print("--------------------------")
+
+    temp = [components.split("_") for components in decimated_sites]
+    formatted_decimated_sites = [sorted([int(x) for x in sublist]) for sublist in temp]
+    print(formatted_decimated_sites)
+    
+
 
 def full_sdrg(G, visualizeSteps = False):
     G_mod = G
@@ -617,11 +641,11 @@ def DCP(G, t_max = 1, random_start=True, lattice = True, torus = True):
             break
             #t = t_max
         
-        """                         #THIS BLOCK VISUALIZES THE DCP AT VARIOUS STEPS
-        if step_counter%800 == 0:
+                                 #THIS BLOCK VISUALIZES THE DCP AT VARIOUS STEPS
+        if step_counter%5000 == 0:
             print(f"t={t} --- {N_active} nodes are active")
-            visualize(G, active_nodes=active_nodes)
-        """
+            #visualize(G, active_nodes=active_nodes)
+        
 
         
     print(f"{N_active} nodes are active at t={t} after {step_counter} steps")

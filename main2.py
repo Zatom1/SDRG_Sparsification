@@ -13,10 +13,19 @@ import networkx as nx
 import networkit as nk
 import time
 import matplotlib.pyplot as plt
-import random
+#import random
+from scipy import sparse
+from scipy.sparse.linalg import cg
+import scipy
+from scipy.stats import wasserstein_distance
 import bisect
 np.random.seed(1)
     #"C:\Users\zidda\Downloads\inputs_L10_pbcTrue_h0-1.0_j0-1.0_seed1.npz"
+    
+    
+""" ------------------------------------ GRAPH GENERATION ------------------------------------ """
+    
+
 def translate_Neil_NP_to_graph(filename='inputs_L50_pbcTrue_h0-1.0_j0-1.0_seed1.npz'):
     #This function translates the numpy arrays produced in Neil's program into a networkit graph analyzable by mine
     with np.load(filename) as data:
@@ -56,6 +65,7 @@ def translate_Neil_NP_to_graph(filename='inputs_L50_pbcTrue_h0-1.0_j0-1.0_seed1.
         return G
         
         print(bonds)
+        
         
 def generate_square_lattice(width, height, torus = True, visualize_on=False, disordered_mu = True, constant_mu = 1.0, disordered_lambda=True, constant_lambda = 0.8):
     #Self explanatory
@@ -183,7 +193,6 @@ def generate_chain(length, loop = True, visualize_on=False, disordered_mu = True
     return G
 
 
-
 def generate_arbitrary_graph(size, num_clusters, p_in, p_out):
     #Gen random clustered graph. This is outdated and won't work for new versions of the code because it doesn't properly assign values to things
     G = nk.generators.ClusteredRandomGraphGenerator(size, num_clusters, p_in, p_out).generate()
@@ -217,7 +226,10 @@ def generate_arbitrary_graph(size, num_clusters, p_in, p_out):
     #nk.graphio.writeGraph(G, "network.gml", nk.Format.GML)
     return G #, mu_arr, lambda_arr
     
+
+""" ------------------------------------ GRAPH SPARSIFICATION ------------------------------------ """
     
+
 def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, decimation_log = [], visualizeStep = False):
     #Does a single iteration of the SDRG sparsification
     n_nodes = G.numberOfNodes()
@@ -340,88 +352,267 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
     return G
 
 
-#This might be obsolete;
-def sdrg_step_edge(G, neil_mode = False, decimated_sites=[], logging_toggle = True, decimation_log = [], visualizeStep = False):
-    n_nodes = G.numberOfNodes()
-    healing_factor = G.getNodeAttribute("mu", float)
-    components = G.getNodeAttribute("components", str)
-    is_active = G.getNodeAttribute("active", int)
-    if n_nodes == 1:
-        print("Network is fully sparsified")
-        last_site = [u for u in G.iterNodes()]
-
-        decimated_sites = np.append(decimated_sites, components[last_site[0]])
-        if logging_toggle:
-            return G, decimation_log
-        elif neil_mode:
-            return G, decimated_sites
-        return G
+def sampling_sparsification(G, n_samples, method = 'u', visualize_on = False):
+    """
+    Methods are uniform, weight-based, and effective resistance; corresponding to arguments of 'u', 'w', and 'er'
+    """
+    G_tilde = nk.graph.Graph(n=G.numberOfNodes(), weighted=True, edgesIndexed=True)
+    edges = np.array([(u,v) for u,v in G.iterEdges()])
     
-    mu_arr = np.array([np.array([healing_factor[u], u]).T for u in G.iterNodes()])
-    lambda_arr = np.array([np.array([G.weight(u,v), u, v]).T for u,v in G.iterEdges()])
+    if method == 'u':
+        edge_pmf = np.ones(len(edges)) * (1/len(edges))
+    elif method == 'w':
+        pass
+        
+
+def uniform_sampling_sparsification(G, n_samples, visualize_on = False):
+    G_tilde = nk.graph.Graph(n=G.numberOfNodes(), weighted=True, edgesIndexed=True)
+    edges = np.array([(u,v) for u,v in G.iterEdges()])
     
-    lambda_arr = lambda_arr*0
-    #print(lambda_arr[:,0])
+    for sample in range(n_samples):
+        choice_index = int(np.random.choice(np.arange(edges.size/2)))
+        choice = edges[choice_index]
         
-    max_mu_lambda_index = np.argmax(np.concat((mu_arr[:,0], lambda_arr[:,0])))
-    #print(max_mu_lambda_index)
-    if max_mu_lambda_index > n_nodes-1: #true iff biggest value is a lambda
-        edge_to_decimate = lambda_arr[max_mu_lambda_index-n_nodes, 1:] #np list of length 2
+        #we ensure that there are no duplicates
+        if G_tilde.weight(choice[0], choice[1]) == 0:
+            new_weight = G.weight(choice[0], choice[1]) 
+        else:
+            new_weight = G_tilde.weight(choice[0], choice[1]) + G.weight(choice[0], choice[1])
+            G_tilde.removeEdge(choice[0], choice[1])
         
-        #union the two sets containing neighbors of u and v
-        # sets automatically remove the duplicates
-        pair_neighborhood = {u for u in G.iterNeighbors(edge_to_decimate[0])} | {v for v in G.iterNeighbors(edge_to_decimate[1])}
-        #neighbors_checked = set(())
-        u = edge_to_decimate[0]
-        v = edge_to_decimate[1]
-        #print(f"decimating edge {edge_to_decimate} with lambda = {G.weight(u,v)}")
-
-        k = G.addNode() # returns new node id, so k = new node id
-        if logging_toggle:
-            decimation_log.append([len(decimation_log), edge_to_decimate, G.weight(u,v)])
-        
-        #use log and exp to convert mults and divides to adds and substracts
-        #math.exp(math.log(healing_factor[u]) + math.log(healing_factor[v]) - math.log(G.weight(u,v)))
-        h_k = (healing_factor[u]*healing_factor[v])/(G.weight(u,v))
-        #np.append(mu_arr, h_k)
-        
-        healing_factor[k] = h_k
-        components[k] = f"{components[u]}_{components[v]}"
-        is_active[k] = 0
-        
-        for neighbor in pair_neighborhood:
-            #we are merging nodes u and v
-            # i for each neighbor
-            J_ui = G.weight(u, neighbor)
-            J_vi = G.weight(v, neighbor)
-            
-            new_edge_weight = max(J_ui, J_vi)
-            G.addEdge(k, neighbor, new_edge_weight)
-            #np.append(lambda_arr, np.array([new_edge_weight, k, neighbor]).T)
-            
-        #remove nodes at end. We had to wait b/c otherwise we can't calculate weights in loop
-        G.removeNode(u)
-        G.removeNode(v)
-        #mu_arr = mu_arr[mu_arr != u and mu_arr != v]
-        
-        #print(f"decimated edge between nodes {u} and {v} to create node {k} with components {components[k]}")
-        
-        
-        #print(edge_to_decimate)
-        
-        
-        
-    #nk.graphio.writeGraph(G, f"network_{time.time_ns()}_T.gml", nk.Format.GML)
-    if visualizeStep:
-        visualize(G)
-    if logging_toggle:
-        return G, decimation_log
-    elif neil_mode:
-        return G, decimated_sites
-    return G
+        G_tilde.addEdge(choice[0], choice[1], w=new_weight)
+    
+    if visualize_on:
+        visualize(G_tilde)
+    return G_tilde
 
 
+def weight_sampling_sparsification(G, n_samples, visualize_on = False):
+    G_tilde = nk.graph.Graph(n=G.numberOfNodes(), weighted=True, edgesIndexed=True)
+    G_edge_pmf = np.array([G.weight(u,v) for u,v in G.iterEdges()])*(1/sum([G.weight(u,v) for u,v in G.iterEdges()]))
+    edges = np.array([(u,v) for u,v in G.iterEdges()])
+    #print(edges[0])
+    #print(G_edge_pmf.size)
+    
+    for sample in range(n_samples):
+        #Mercier et al. uses the probability p_e of choosing an edge in the new 
+        # weight expression, so we get the index to ensure we can retreive the 
+        # right probability from the edge pmf
+        choice_index = int(np.random.choice(np.arange(edges.size/2), p=G_edge_pmf))
+        #print(choice_index)
+        choice = edges[choice_index]
+        
+        #we ensure that there are no duplicates
+        if G_tilde.weight(choice[0], choice[1]) == 0:
+            new_weight =(G.weight(choice[0], choice[1]) / (n_samples * G_edge_pmf[choice_index]))
+        else:
+            new_weight = G_tilde.weight(choice[0], choice[1]) + (G.weight(choice[0], choice[1]) / (n_samples * G_edge_pmf[choice_index]))
+            G_tilde.removeEdge(choice[0], choice[1])
+        
+        G_tilde.addEdge(choice[0], choice[1], w=new_weight)
+    
+    if visualize_on:
+        visualize(G_tilde)
+    return G_tilde
 
+
+def effective_resistance_sampling_sparsification(G, n_samples, visualize_on = False):
+    
+    # ------------------------------- MODIFIED FROM MERCIER ET AL. PAPER --------------------------------
+    # Transform edge list to sparse adj matrix
+
+    def Mtrx_Elist(A):
+        #print(A)
+        #print(sparse.triu(A))
+        triu = sparse.triu(A).toarray()
+        j, i = np.nonzero(triu)  # Find edges
+        elist = np.vstack((i, j))
+        weights = A[triu != 0]  # Find weights
+        #print(elist.transpose())
+        #print(weights[0, :][0])
+        #print(np.array(weights)[0])
+        weights = np.array(weights)[0]
+        return elist.transpose(), weights
+
+    # Par:
+    ## E_list; edge list
+    ## weights; edge weights
+    def Elist_Mtrx_s(E_list, weights):
+        n = np.max(E_list) + 1  # +1 for Python 0-index
+        A = sparse.csr_matrix((weights, (E_list[:, 0], E_list[:, 1])), shape=(n, n))
+        A = A + A.transpose()
+
+        return A
+
+    # Compute Laplacian, L
+    # Par:
+    ## A; sparse adj matrix
+    def Lap_s(A):
+        L = sparse.csgraph.laplacian(A)
+        return L
+
+    # Compute signed-edge vertex incidence matrix, B
+    # Par:
+    ## E_list; edge list
+    def sVIM(E_list):
+        m = np.shape(E_list)[0]  # number of edges
+        E_list = E_list.transpose()  # make rows edge list
+
+        data = [1] * m + [-1] * m  # arbitrary tails and heads
+        i = list(range(0, m)) + list(range(0, m))  # i-th positions
+        j = E_list[0, :].tolist() + E_list[1, :].tolist()  # j-th positions
+
+        B = sparse.csr_matrix((data, (i, j)))  # Using sparse row matrix format for later use
+
+        return B
+
+    # Compute weights matrix, W
+    # Par:
+    ## weights; edge weights
+    def WDiag(weights):
+        m = len(weights)
+
+        weights_sqrt = np.sqrt(weights)  # element-wise sqrt of weights for later use
+        W = sparse.dia_matrix((weights_sqrt, [0]), shape=(m, m))  # Use more efficient dia sparse matrix
+
+        return W
+
+
+    # EffR Approximation
+    # method from Koutis et al.
+    # Par:
+    ## E_list; edge list
+    ## weights; list of weights
+    ## epsilon; controls accuracy of approximation, increases computation time
+    ## method; method of calculation for EffR
+    ##
+    #### 'ext', exact calculation
+    #### 'ssa', original Spielman-Srivastava algorithm
+    #### 'kts', Koutis et. al
+    ##### Implement preconditioner M for cg solver? cg(A,b,tol,M=None) - 
+    #use spilu function or another from scipy.sparse.linalg? 
+    #https://stackoverflow.com/questions/32865832/preconditioned-conjugate-gradient-and-linearoperator-in-python
+    ##### !Warning! For very small networks, a preconditioner is advised!
+    def EffR(E_list, weights, epsilon, method, tol=1e-10):
+        # Find number of edges and number of nodes
+        m = np.shape(E_list)[0]
+        n = np.max(E_list) + 1
+
+        # Obtain necessary matrices from edge list and edge weights
+        A = Elist_Mtrx_s(E_list, weights)  # adj matrix - sparse
+        L = Lap_s(A)  # Laplacian (sparse array)
+        B = sVIM(E_list)  # vertex indices matrix (crs)
+        W = WDiag(weights)  # Diagonal weight matrix (dia)
+        scale = np.ceil(np.log2(n)) / epsilon  # set scale/resolution for Johnson-Lindenstrauss projection
+
+        M = None
+
+        # Original Spielman-Srivastava algorithm
+        if method == 'spl':
+
+            # Define Q in type coo sparse matrix
+            Q1 = sparse.random(int(scale), m, 1, format='csr') > 0.5
+            Q2 = sparse.random(int(scale), m, 1, format='csr') > 0
+            Q_not = Q1 - Q2  # need this to pass by invalid 'not' operator
+            Q = Q1 + (-1 * Q_not)  # create Q matrix of 1s and -1s
+            Q = Q / np.sqrt(scale)
+
+            SYS = Q @ W @ B  # create system for Johnson-Lindenstrauss projection
+            Z = np.zeros(shape=(int(scale), n))  # Create Z matrix to solve smaller dim SYS for effR
+
+            if M is None:  # If no preconditioner
+                for i in range(int(scale)):
+                    SYSr = SYS[i, :].toarray()
+                    Z[i, :] = cg(L, SYSr.transpose(), rtol=tol)[0]  #--------------- ZEE changed tol to RTOL
+            else:  # If preconditioner
+                for i in range(int(scale)):
+                    SYSr = SYS[i, :].toarray()
+                    Z[i, :] = cg(L, SYSr.transpose(), rtol=tol, M=M)[0]
+
+            effR = np.sum(np.square(Z[:, E_list[:, 0]] - Z[:, E_list[:, 1]]),
+                          axis=0)  # Calculate distance between poitns for effR
+            return effR
+
+        # Koutis et al. algorithm
+        if method == 'kts':
+            effR_res = np.zeros(shape=(1, m))
+
+            if M is None:
+                for i in range(int(scale)):
+                    ons1 = sparse.random(1, m, 1, format='csr') > 0.5
+                    ons2 = sparse.random(1, m, 1, format='csr') > 0
+                    ons_not = ons1 - ons2  # need this to pass by invalid 'not' operator
+                    ons = ons1 + (-1 * ons_not)  # create Q matrix of 1s and -1s
+                    ons = ons / np.sqrt(scale)
+
+                    b = ons @ W @ B
+                    b = b.toarray()
+
+                    Z = sparse.linalg.cg(L, b.transpose(), tol=tol)[0]
+                    Z = Z.transpose()
+
+                    effR_res = effR_res + np.abs(np.square(Z[E_list[:, 0]] - Z[E_list[:, 1]]))
+
+            else:
+                for i in range(int(scale)):
+                    # Create memory saving vectors
+                    ons1 = sparse.random(1, m, 1, format='csr') > 0.5
+                    ons2 = sparse.random(1, m, 1, format='csr') > 0
+                    ons_not = ons1 - ons2  # need this to pass by invalid 'not' operator
+                    ons = ons1 + (-1 * ons_not)  # create Q matrix of 1s and -1s
+                    ons = ons / np.sqrt(scale)
+
+                    b = ons @ W @ B
+
+                    Z = sparse.linalg.cg(L, b.transpose, tol=tol, M=M)[0]
+                    Z = Z.transpose()
+
+                    effR_res = effR_res + np.abs(np.square(Z[E_list[:, 0]] - Z[E_list[:, 1]]))
+
+            effR = effR_res[0]
+            return effR
+    
+    # -------------------- END OF CODE MODIFIED FROM MERCIER ET AL. -----------------------
+    
+    adj_mat = nk.algebraic.adjacencyMatrix(G)
+    E_list, weights = Mtrx_Elist(adj_mat)
+    
+    resistances = EffR(E_list, weights, 0.1, method='spl')
+    print(E_list)
+    print(resistances)
+    
+    G_tilde = nk.graph.Graph(n=G.numberOfNodes(), weighted=True, edgesIndexed=True)
+    #L = nk.algebraic.laplacianMatrix(G)
+    #L_plus = scipy.linalg.pinv(L)       #REPLACE WITH APPROXIMATE PSEUDOINVERSE FCN USING SPIELMAN & SRIVASTAVA RANDOM PROJECTION TECHNIQUE
+    #dim = L.shape[0]
+    
+    G_edge_pmf = np.array(resistances)*(1/sum(resistances))
+    
+    
+    for sample in range(n_samples):
+        choice_index = int(np.random.choice(np.arange(E_list.size/2), p=G_edge_pmf))
+        #print(choice_index)
+        edge_to_sample = E_list[choice_index]
+        #edge_to_sample = np.random.choice(E_list, p=G_edge_pmf)
+        u = edge_to_sample[0]
+        v = edge_to_sample[1]
+        
+        #G_tilde.addEdge(u,v, G.weight(u,v))
+        if G_tilde.weight(u, v) == 0:
+            new_weight =(G.weight(u, v) / (n_samples * G_edge_pmf[choice_index]))
+        else:
+            new_weight = G_tilde.weight(u, v) + (G.weight(u, v) / (n_samples * G_edge_pmf[choice_index]))
+            G_tilde.removeEdge(u, v)
+        
+        G_tilde.addEdge(u, v, w=new_weight)
+        #x = np.zeros(dim)
+        #x[]
+    
+    if visualize_on:
+        visualize(G_tilde)
+    
+    return G_tilde
+    
 
 def get_neil_output(G):
     decimated_sites = []
@@ -435,8 +626,7 @@ def get_neil_output(G):
     formatted_decimated_sites = [sorted([int(x) for x in sublist]) for sublist in temp]
     print(formatted_decimated_sites)
     
-
-
+    
 def full_sdrg(G, visualizeSteps = False):
     decimated_sites = []
     for i in range(G.numberOfNodes()):
@@ -447,9 +637,22 @@ def full_sdrg(G, visualizeSteps = False):
         
     return G
 
+
 def n_sdrg(G, n, visualizeSteps = False):
     decimated_sites = []
     for i in range(n):
+        G, decimated_sites = sdrg_step(G, decimated_sites, visualizeStep=visualizeSteps)
+        
+    #print(decimated_sites)
+    print("--------------------------")
+        
+    return G
+
+
+def until_n_remain_sdrg(G, n, visualizeSteps = False):
+    #
+    decimated_sites = []
+    for i in range(G.numberOfNodes()-n+1):
         G, decimated_sites = sdrg_step(G, decimated_sites, visualizeStep=visualizeSteps)
         
     #print(decimated_sites)
@@ -466,44 +669,16 @@ def prop_sdrg(G, proportion, visualizeSteps = False):
     decimated_sites = []
     for i in range(n):
         G, decimated_sites = sdrg_step(G, decimated_sites, visualizeStep=visualizeSteps)
-        
+        if i%100 ==0:
+            print(f"decimated {i} nodes")
     #print(decimated_sites)
     print("--------------------------")
         
     return G
 
-def print_graph_values(G):
-    healing_factor = G.getNodeAttribute("mu", float)
-    num_edges = G.numberOfEdges()
-    num_nodes = G.numberOfNodes()
-    print(f"G has {num_edges} edges and {num_nodes} nodes \n------------------")
-    
-    for u in G.iterNodes():
-        print(f"node {u} has mu = {healing_factor[u]}")
-    for u,v in G.iterEdges():
-        print(f"edge from {u} to {v} has lambda = {G.weight(u,v)}")
-    
-    
-    if num_edges > 0:
-        lambda_avg = (G.totalEdgeWeight()/num_edges)
-        print(f"The average lambda = {lambda_avg}")
-        
-def visualize(G, active_nodes=[], node_size = 100):
-    #G = nk.readGraph("../input/karate.graph", nk.Format.METIS)
-    # Initalize and run Betweenness algorithm
-    
-    nx_graph = nk.nxadapter.nk2nx(G)
 
-    # 3. Draw the graph using Matplotlib
-    plt.figure(figsize=(8, 6))
-    pos = nx.spring_layout(nx_graph, seed=2)
+""" ------------------------------------ DCP SIMULATION ------------------------------------ """
 
-    
-    options = {"edgecolors": "tab:gray", "node_size": node_size*1.2, "alpha": 0.9}
-    nx.draw(nx_graph, pos=pos, with_labels=True, node_color='skyblue', node_size=node_size)
-    nx.draw_networkx_nodes(G, pos, nodelist=active_nodes, node_color="tab:red", **options)
-    plt.show()
-    
 
 def DCP_slow(G, track_TOA=False, quasistationary = True, t_max = 1, random_start = True, start_node = 0):
     patient_zero = 0
@@ -651,7 +826,6 @@ def DCP_slow(G, track_TOA=False, quasistationary = True, t_max = 1, random_start
     print(f"{N_active} nodes are active at t={t} after {step_counter} steps")
     if track_TOA:
         return TOA_tracker
-
 
 
 def DCP(G, track_TOA=False, quasistationary = True, t_max = 1, random_start = True, start_node = 0):
@@ -810,7 +984,7 @@ def DCP(G, track_TOA=False, quasistationary = True, t_max = 1, random_start = Tr
             #t = t_max
         
                                  #THIS BLOCK VISUALIZES THE DCP AT VARIOUS STEPS
-        if step_counter%1000 == 0:
+        if step_counter%5000 == 0:
             #pass
             print(f"t={t} --- {N_active} nodes are active")
             #visualize(G, active_nodes=active_nodes)
@@ -820,6 +994,7 @@ def DCP(G, track_TOA=False, quasistationary = True, t_max = 1, random_start = Tr
     print(f"{N_active} nodes are active at t={t} after {step_counter} steps. The last timestep was {deltaT}")
     if track_TOA:
         return TOA_tracker
+
 
 
 def sparsified_DCP(G, track_TOA=False, quasistationary = True, t_max = 1, random_start = True, start_node = 0, original_graph_size = 100):
@@ -868,7 +1043,7 @@ def sparsified_DCP(G, track_TOA=False, quasistationary = True, t_max = 1, random
     
     seconds = np.linspace(0, t_max, num=(round(t_max)*original_graph_size)+1)#the graph size is our resolution, so t_max*graph_size gives us the proper timesteps.
     df = pd.DataFrame(False, index=np.arange(original_graph_size), columns=seconds) 
-
+    
     while t < t_max:
         t0=time.time_ns()
         
@@ -915,6 +1090,7 @@ def sparsified_DCP(G, track_TOA=False, quasistationary = True, t_max = 1, random
                 df_col = find_lt(seconds, t)
                 for site in components[random_site].split("_"):
                     site_index = int(site)
+                    
                     df.iloc[site_index, df_col:] = np.where(df.iloc[site_index, df_col:] == True, False, True)
                     
                     #df = swap_column_vals_after_k(df, site_index, df_col)
@@ -951,7 +1127,6 @@ def sparsified_DCP(G, track_TOA=False, quasistationary = True, t_max = 1, random
                     df_col = find_lt(seconds, t)
                     for site in components[site_to_infect].split("_"):
                         site_index = int(site)
-                        
                         df.iloc[site_index, df_col:] = np.where(df.iloc[site_index, df_col:] == True, False, True)
                         
                         #df = swap_column_vals_after_k(df, site_index, df_col)
@@ -971,7 +1146,7 @@ def sparsified_DCP(G, track_TOA=False, quasistationary = True, t_max = 1, random
             #t = t_max
         #print((1/1000000000)*(time.time_ns()-t0))
                                  #THIS BLOCK VISUALIZES THE DCP AT VARIOUS STEPS
-        if step_counter%1000 == 0:
+        if step_counter%5000 == 0:
             #pass
             print(f"t={t} --- {N_active} nodes are active")
             #visualize(G, active_nodes=active_nodes)
@@ -983,6 +1158,219 @@ def sparsified_DCP(G, track_TOA=False, quasistationary = True, t_max = 1, random
         return TOA_tracker
     else:
         return df
+
+
+def sparsified_DCP_fast(G, track_TOA=False, quasistationary = True, t_max = 1, random_start = True, start_node = 0, original_graph_size = 100):
+    patient_zero = 0
+    healing_factor = G.getNodeAttribute("mu", float)
+    is_active = G.getNodeAttribute("active", int)
+    components = G.getNodeAttribute("components", str)
+    nodes = list(G.iterNodes())
+    active_nodes = set([u for u in G.iterNodes() if is_active[u] == 1])
+    
+    transition_times = {site : [] for site in range(original_graph_size)}
+    
+    
+    if random_start and len(active_nodes) == 0:
+        s = np.random.randint(0, len(nodes))
+        patient_zero = nodes[s]
+        is_active[patient_zero] = 1
+        N_active = 1
+        
+        active_nodes.add(patient_zero)
+        print(patient_zero)
+    elif len(active_nodes) == 0:
+        is_active[start_node] = 1
+        N_active = 1
+        active_nodes.add(start_node)
+    else:
+        N_active = len(active_nodes)
+        
+    for site in active_nodes:
+        #give every node that starts out being active a transition at 0 to represent the initial condition
+        for component in components[site].split("_"):
+            #larger node indices appear after sparsification (even though there are fewer nodes), so this prevents out of bounds errors
+            transition_times[int(component)].append(0)
+    
+    step_counter = 0 #used just to draw updates every once in a while
+    TOA_tracker = set()
+    
+    if track_TOA:
+        TOA_tracker.add((0, patient_zero, components[patient_zero]))
+        
+    """
+    This differs from the original sparsified DCP bc it builds the dataframe 
+    differently. The two are not interchangeable because of this different 
+    output type
+    """
+    t = 0
+    print("beginning infection")
+    
+    exposed_edges = set([
+            (u,v) 
+            for u in active_nodes #outer
+            for v in G.iterNeighbors(u) #inner
+        ])
+    
+    deltaT = 0
+    
+    #the graph size is our resolution, so t_max*graph_size gives us the proper timesteps.
+    #seconds = np.linspace(0, t_max, num=(round(t_max)*original_graph_size)+1)
+    #need to make sure that the array is large enough to hold 
+    
+    #df = pd.DataFrame(False, index=np.arange(original_graph_size), columns=seconds) 
+    lambda_max = max([G.weight(u, v) for u,v in exposed_edges]) 
+    while t < t_max:
+        #t0=time.time_ns()
+        
+        N_active = len(active_nodes)
+        #print(N_active)
+        # the number of exposed nodes is the same as the number of edges connected to active sites
+        N_exposed = len(exposed_edges)
+        #t1=time.time_ns()
+        #a = [G.weight(u, v) for u,v in exposed_edges]
+        #print(a)
+        #print(patient_zero)
+        #print(active_nodes)
+        #TODO Maybe change this so that we have an absolute maximum (across whole network) that we can use? Then no need to recompute and we get rid of this expensive check
+        
+
+        #print(lambda_max)        
+
+        u1 = np.random.random()
+        u2 = np.random.random()
+        u3 = np.random.random()
+        
+        
+        #t1=time.time_ns()
+        #t2=0
+        #t3=0
+        #t4=0
+        #t5=0
+        
+        if N_active > 0:
+            #instead of using the standard method of converting set to list, then choosing from the list, we use this faster function. 
+            #we need to choose from 0->2*original_size because after full sparsification we could get indices up to 2x the original max index
+            random_site = fast_random_choose(active_nodes, 0, 2*original_graph_size)
+            #random_site = np.random.choice(list(active_nodes)) #this is the only time we need active_nodes to be ordered, so we make a list for it
+            mu_i = healing_factor[random_site]
+            
+            prob_to_heal = (mu_i*N_active)/((mu_i*N_active)+N_exposed)
+            #t2=time.time_ns()
+            #t4=time.time_ns()
+            if u1 <= prob_to_heal and not (quasistationary and N_active == 1):
+                #print("healing")
+                #choose random node to heal?
+                #site_to_heal = np.random.choice(tuple(active_nodes)) #active_nodes[np.random.randint(0, len(active_nodes))] #np.random.choice(active_nodes_list, p=heal_pmf)
+                 
+                is_active[random_site] = 0
+                
+                #newly_unexposed_neighbors = [edge for edge in exposed_edges if edge[0] == random_site]
+                for neighbor in G.iterNeighbors(random_site):
+                    if G.weight(random_site, neighbor) == lambda_max:
+                        exposed_edges.remove([random_site, neighbor])
+                        lambda_max = max([G.weight(u, v) for u,v in exposed_edges]) 
+                    else:
+                        exposed_edges.remove([random_site, neighbor])
+                    
+                active_nodes.remove(random_site)
+                if track_TOA:
+                    TOA_tracker.add((t, random_site, components[random_site]))
+                    
+                #we could calculate df_col above "if N_active > 0" bc its global, but there are some wasted actions so may as well wait until we know we need it!
+                #df_col = find_lt(seconds, t)
+                for site in components[random_site].split("_"):
+                    #site_index = int(site)
+                    
+                    #df.iloc[site_index, df_col:] = np.where(df.iloc[site_index, df_col:] == True, False, True)
+                    
+                    transition_times[int(site)].append(t)
+                    
+                    #df = swap_column_vals_after_k(df, site_index, df_col)
+                #= active_nodes[active_nodes!=site_to_heal]
+                #print(f"healed site {active_nodes[site_to_heal]}")
+                
+                deltaT = 1/(N_active-1)
+                t += deltaT
+                #t5=time.time_ns()
+                #print("heal")
+            elif u2 < lambda_max:
+                #print("spreading")
+                #For each edge that /could/ transmit an infection, the probability of choosing is proportional to the edge's lambda value
+                #edge_transmission_chances = np.array([G.weight(u,v) for u,v in exposed_edges])
+                #transmission_pmf = edge_transmission_chances*(1/sum(edge_transmission_chances))
+                #infection_chances_list = infection_chances_list*(1/sum(infection_chances_list))
+                
+                #print(f"active are {active_nodes}")
+                #exposed_sites = exposed_edges[:, 1]
+                
+                exposed_sites = [site for site in G.iterNeighbors(random_site)]
+                site_to_infect = np.random.choice(exposed_sites)
+                
+                if u3 < G.weight(random_site, site_to_infect):
+                    #print("infecting")
+                    is_active[site_to_infect] = 1
+                    active_nodes.add(site_to_infect)# = np.append(active_nodes, site_to_infect)
+                    newly_exposed_neighbors = [(site_to_infect,v) 
+                            for v in G.iterNeighbors(site_to_infect) #inner
+                        ]
+                    for edge in newly_exposed_neighbors:
+                        exposed_edges.add(edge)
+                        newWeight = G.weight(edge[0], edge[1])
+                        if newWeight > lambda_max:
+                            lambda_max = newWeight
+                    if track_TOA:
+                        TOA_tracker.add((t, site_to_infect, components[site_to_infect]))
+                    
+                    #df_col = find_lt(seconds, t)
+                    for site in components[site_to_infect].split("_"):
+                        #site_index = int(site)
+                        #df.iloc[site_index, df_col:] = np.where(df.iloc[site_index, df_col:] == True, False, True)
+                        
+                        transition_times[int(site)].append(t)
+                        #df = swap_column_vals_after_k(df, site_index, df_col)
+                    
+                    
+                    deltaT = 1/(N_active+1)
+                    t += deltaT
+                    
+                    #t5=time.time_ns()
+                    #print("inf")
+                else:
+                    #print("wasting")
+                    deltaT = 1/N_active
+                    t += deltaT
+                    #t5=time.time_ns()
+                    #print("waste")
+            #t3=time.time_ns()
+                
+            #print("--")
+            #print((t3-t0)/1000000000)
+            #print((t5-t4)/1000000000)
+            #print((t2-t1)/1000000000)
+            
+            
+            step_counter+=1
+        else:
+            print(f"Entered the absorbing state after {step_counter} timesteps at t = {t}, the last timestep was {deltaT}")
+            break
+            #t = t_max
+        #print((1/1000000000)*(time.time_ns()-t0))
+                                 #THIS BLOCK VISUALIZES THE DCP AT VARIOUS STEPS
+        if step_counter%5000 == 0:
+            #pass
+            print(f"t={t} --- {N_active} nodes are active")
+            #visualize(G, active_nodes=active_nodes)
+        
+
+        
+    print(f"{N_active} nodes are active at t={t} after {step_counter} steps. The last timestep was {deltaT}")
+    if track_TOA:
+        return TOA_tracker
+    else:
+        return transition_times
+
+
 
 def estimate_runtime(graph_size, t_max, avg_proportion_infected=0.7):
     #0.00015 is a rough estimate of how long each timestep takes
@@ -997,23 +1385,19 @@ def reset_DCP(G):
     is_active = G.getNodeAttribute("active", int)
     for u in G.iterNodes():
         is_active[u] = 0
-
-"""
-We want to profile the network based on a few characteristics:
-    - Rate of infection spread / Time Of Arrival accuracy
-    - Check if sparsified networks have same lambda_critical
-    - etc.?
-The following functions handle these characterizations
-
-"""
-
-def swap_column_vals_after_k(df, row, k):
-    for i in range(k, df.shape[1]):
-        if df.iat[row, i] == 0:
-            df.iat[row, i] = 1
+        
+def reset_to_distributed_infection(G, proportion):
+    is_active = G.getNodeAttribute("active", int)
+    for u in G.iterNodes():
+        x = np.random.random()
+        if x < proportion:
+            is_active[u] = 1
         else:
-            df.iat[row, i] = 0
-    return df
+            is_active[u] = 0
+
+
+""" ------------------------------------ COLLECT DCP DATA ------------------------------------ """
+
 
 def get_DCP_data(G, t_max, n_sims):
     
@@ -1074,14 +1458,17 @@ def get_DCP_data_asymptotic(G, t_max, resolution):
             
     return df
 
+
 def find_lt(arr, x):
     'Find index of rightmost value less than x. Copied from bisect docs and modified'
     i = bisect.bisect_left(arr, x)
+    """if i == 0:
+        return 0"""
     return i-1
-    #raise ValueError
+    
 
 def asymptotic_quasistationary_activity_probability(G, G_structure="chain"):
-    relaxation_time = 10000
+    relaxation_time = 5000
     DCP(G, t_max=relaxation_time, quasistationary=True, random_start=True)
     data = get_DCP_data_asymptotic(G, relaxation_time, G.numberOfNodes())
     
@@ -1111,8 +1498,8 @@ def asymptotic_quasistationary_activity_probability(G, G_structure="chain"):
     return data
 
 
-def sparsified_asymptotic_quasistationary_activity_probability(G, G_structure="chain", original_graph_size=100):
-    relaxation_time = 10000
+def sparsified_asymptotic_quasistationary_activity_probability(G, G_structure="chain", original_graph_size=100, dimensions = [1, 1]):
+    relaxation_time = 25
     DCP(G, t_max=relaxation_time, quasistationary=True, random_start=True)
     data = sparsified_DCP(G, t_max=relaxation_time, original_graph_size=original_graph_size)
     
@@ -1127,21 +1514,205 @@ def sparsified_asymptotic_quasistationary_activity_probability(G, G_structure="c
     if G_structure == "chain":
         plt.bar(range(original_graph_size), proportions_of_time_active, width=1, linewidth=0)
     if G_structure == "lattice":
-
-        Z = np.random.rand(6, 10)
-        x = np.arange(-0.5, 10, 1)  # len = 11
-        y = np.arange(4.5, 11, 1)  # len = 7
+        # same code as vis_lat
+        h = dimensions[0]
+        w = dimensions[1]
+        
+        Z = np.zeros((h,w))
+        
+        #first build a bunch of lines/rows
+        for y in range(h):
+            for x in range(w):  
+                Z[x,y] = proportions_of_time_active[x+(y*w)]
+        
+        x = np.arange(w)
+        y = np.arange(h)
+        X, Y = np.meshgrid(x, y)
         
         fig, ax = plt.subplots()
-        ax.pcolormesh(x, y, Z)
-        
+        ax.pcolormesh(x, y, Z, cmap='viridis')
         fig.tight_layout()
+
+        #fig, (ax1, ax2, ax3) = plt.subplots(figsize=(13, 3), ncols=3)
+        
+        # plot just the positive data and save the
+        # color "mappable" object returned by ax1.imshow
+        pos = ax.imshow(Z, cmap='viridis', interpolation='none')
+        
+        # add the colorbar using the figure's method,
+        # telling which mappable we're talking about and
+        # which Axes object it should be near
+        fig.colorbar(pos, ax=ax)    
         plt.show()
-    
     #data.to_excel("output_{time.time_ns()}.xlsx")
     return data
 
 
+def fast_sparsified_asymptotic_quasistationary_activity_probability(G, t_relax = 30, G_structure="chain", original_graph_size=100, dimensions = [1, 1], viz=True):
+    relaxation_time = t_relax
+    sparsified_DCP_fast(G, t_max=relaxation_time, original_graph_size=original_graph_size)
+    #data is a dictionary with keys = sites and values = list of transition times
+    data = sparsified_DCP_fast(G, t_max=relaxation_time, original_graph_size=original_graph_size)
+    
+    
+    if viz:
+        #matrix = np.matrix(data.to_numpy())
+        
+        #print(matrix.shape)
+        total_time_active_list = np.empty(original_graph_size)
+        for site in data:
+            trans_times = data[site]
+            total_time_active = 0
+            for i in range(1, len(trans_times), 2):
+                total_time_active += trans_times[i] - trans_times[i-1]
+            total_time_active_list[site] = total_time_active
+        
+        proportions_of_time_active = total_time_active_list/relaxation_time
+        #print(proportions_of_time_active_listform)
+        #proportions_of_time_active = [u[0,0] for u in proportions_of_time_active_listform]
+        #print(proportions_of_time_active)
+        #print(proportions_of_time_active)
+        if G_structure == "chain":
+            plt.bar(range(original_graph_size), proportions_of_time_active, width=1, linewidth=0)
+        if G_structure == "lattice":
+            # same code as vis_lat
+            h = dimensions[0]
+            w = dimensions[1]
+            
+            Z = np.zeros((h,w))
+            
+            #first build a bunch of lines/rows
+            for y in range(h):
+                for x in range(w):  
+                    Z[x,y] = proportions_of_time_active[x+(y*w)]
+            
+            x = np.arange(w)
+            y = np.arange(h)
+            X, Y = np.meshgrid(x, y)
+            
+            fig, ax = plt.subplots()
+            ax.pcolormesh(x, y, Z, cmap='viridis')
+            fig.tight_layout()
+    
+            #fig, (ax1, ax2, ax3) = plt.subplots(figsize=(13, 3), ncols=3)
+            
+            # plot just the positive data and save the
+            # color "mappable" object returned by ax1.imshow
+            pos = ax.imshow(Z, cmap='viridis', interpolation='none')
+            
+            # add the colorbar using the figure's method,
+            # telling which mappable we're talking about and
+            # which Axes object it should be near
+            fig.colorbar(pos, ax=ax)    
+            fig.suptitle(f"{100*(1-(G.numberOfNodes()/original_graph_size))}% sparsified", fontsize=12)
+            plt.show()
+
+    return data
+
+
+
+""" ------------------------------------ QUANTIFY SPARSIFIER QUALITY ------------------------------------ """
+
+
+def Wasserstein_ATES(G, sim_time, num_simulations=10):
+    fast_sparsified_asymptotic_quasistationary_activity_probability(G, t_relax=sim_time, original_graph_size=G.numberOfNodes(), viz=False)
+
+def WDMeans(Org_Arrivals, Sps_Arrivals, simnum):
+    arrivals = []
+    for i in range(len(Org_Arrivals)):
+        arrival_org = [x / simnum for x in Org_Arrivals[i]]
+        arrival_spl = [x / simnum for x in Sps_Arrivals[i]]
+        if arrival_org == [] or arrival_spl == []:
+            if arrival_org == [] and arrival_spl != []:
+                arrivals.append(1)
+            elif arrival_org != [] and arrival_spl == []:
+                arrivals.append(1)
+            elif arrival_org == [] and arrival_spl == []:
+                arrivals.append(0)
+        else:
+            arrivals.append(wasserstein_distance(arrival_org, arrival_spl))
+
+    return np.mean(arrivals)
+
+
+""" ------------------------------------ UTILITIES ------------------------------------ """
+
+
+def print_graph_values(G):
+    healing_factor = G.getNodeAttribute("mu", float)
+    num_edges = G.numberOfEdges()
+    num_nodes = G.numberOfNodes()
+    print(f"G has {num_edges} edges and {num_nodes} nodes \n------------------")
+    
+    for u in G.iterNodes():
+        print(f"node {u} has mu = {healing_factor[u]}")
+    for u,v in G.iterEdges():
+        print(f"edge from {u} to {v} has lambda = {G.weight(u,v)}")
+    
+    
+    if num_edges > 0:
+        lambda_avg = (G.totalEdgeWeight()/num_edges)
+        print(f"The average lambda = {lambda_avg}")
+        
+        
+def visualize(G, active_nodes=[], node_size = 100):
+    #G = nk.readGraph("../input/karate.graph", nk.Format.METIS)
+    # Initalize and run Betweenness algorithm
+    
+    nx_graph = nk.nxadapter.nk2nx(G)
+
+    # 3. Draw the graph using Matplotlib
+    plt.figure(figsize=(8, 6))
+    pos = nx.spring_layout(nx_graph, seed=2)
+
+    
+    options = {"edgecolors": "tab:gray", "node_size": node_size*1.2, "alpha": 0.9}
+    nx.draw(nx_graph, pos=pos, with_labels=True, node_color='skyblue', node_size=node_size)
+    nx.draw_networkx_nodes(G, pos, nodelist=active_nodes, node_color="tab:red", **options)
+    plt.show()
+    
+
+def vis_lat(data, dimensions):
+    matrix = np.matrix(data.to_numpy())
+    
+    #print(matrix.shape)
+
+    proportions_of_time_active_listform = matrix.sum(axis=1)
+    proportions_of_time_active = [u[0,0] for u in proportions_of_time_active_listform]
+    
+    #print(proportions_of_time_active)
+    
+    h = dimensions[0]
+    w = dimensions[1]
+    
+    Z = np.zeros((h,w))
+    
+    #first build a bunch of lines/rows
+    for y in range(h):
+        for x in range(w):  
+            Z[x,y] = proportions_of_time_active[x+(y*w)]
+    
+    x = np.arange(w)
+    y = np.arange(h)
+    X, Y = np.meshgrid(x, y)
+    
+    fig, ax = plt.subplots()
+    ax.pcolormesh(x, y, Z, cmap='viridis')
+    fig.tight_layout()
+
+    #fig, (ax1, ax2, ax3) = plt.subplots(figsize=(13, 3), ncols=3)
+    
+    # plot just the positive data and save the
+    # color "mappable" object returned by ax1.imshow
+    pos = ax.imshow(Z, cmap='viridis', interpolation='none')
+    
+    # add the colorbar using the figure's method,
+    # telling which mappable we're talking about and
+    # which Axes object it should be near
+    fig.colorbar(pos, ax=ax)    
+    plt.show()
+    
+    
 def get_proportions(simulation_data):
     proportions_arr = []
     for df in simulation_data:
@@ -1172,7 +1743,54 @@ def get_proportions(simulation_data):
     """
 
 
+def swap_column_vals_after_k(df, row, k):
+    for i in range(k, df.shape[1]):
+        if df.iat[row, i] == 0:
+            df.iat[row, i] = 1
+        else:
+            df.iat[row, i] = 0
+    return df
 
+def repeated_sparsifications_simulations_and_visualizations():
+    G = generate_square_lattice(100, 100)
+    #reset_DCP(G)
+    all_data = []
+    for i in range(6):
+        reset_to_distributed_infection(G, 0.7)
+        data = fast_sparsified_asymptotic_quasistationary_activity_probability(G, G_structure='lattice', original_graph_size=10000, dimensions=[100,100])
+        all_data.append(data)
+        G = prop_sdrg(G, 0.5)
+        
+    return all_data
+
+def fast_random_choose(s, min_val, max_val):
+    for i in range(100):
+        u = np.random.randint(min_val, high=max_val)
+        if u in s:
+            return u
+    return np.random.choice(list(s))
+        
+def test():
+    
+    data = set(np.random.randint(0, high=10000, size=12000))
+    print(f"size is {len(data)}")
+    sum_time0 = 0
+    sum_time1 = 0
+    
+    for i in range(1000):
+        t0 = time.time_ns()
+        a = fast_random_choose(data, 0, 10000)
+        t1 = time.time_ns()
+        sum_time0 += (t1-t0)/1000000000
+        
+    for i in range(1000):
+        t0 = time.time_ns()
+        np.random.choice(list(data))
+        t1 = time.time_ns()
+        sum_time1 += (t1-t0)/1000000000
+    
+    print(f"our func has t_avg = {sum_time0/1000}")
+    print(f"their func has t_avg = {sum_time1/1000}")
 """
 
 - Check weight based, effR, semi-metric, etc
@@ -1180,5 +1798,4 @@ def get_proportions(simulation_data):
 - how did the clusters get determined for DCP from the 2020 paper?
     - which metrics are being tracked in the 2020 paper from the DCP there?
 """
-#x = sdrg(*generate_graph(500, 50, 20, 0.1, 0.01))
 

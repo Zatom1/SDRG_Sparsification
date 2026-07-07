@@ -303,9 +303,9 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
             new_edge_weight = max(J_ui, J_vi)
             if logging_toggle:
                 if J_ui == new_edge_weight:
-                    decimation_log.append((v,i))
+                    decimation_log.append((v,neighbor))
                 else:
-                    decimation_log.append((u,i))
+                    decimation_log.append((u,neighbor))
             G.addEdge(k, neighbor, new_edge_weight)
             
         #remove nodes at end. We had to wait b/c otherwise we can't calculate weights in loop
@@ -2982,6 +2982,7 @@ def estimate_runtime(graph_size, t_max, avg_proportion_infected=0.7):
     print(f"{s/60} minutes, or")
     print(f"{s/(60*60)} hrs")
     return 
+
 
 
 def reset_DCP(G):    

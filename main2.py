@@ -19,7 +19,7 @@ from scipy.sparse.linalg import cg
 import scipy
 from scipy.stats import wasserstein_distance
 import bisect
-
+import pickle
 
 np.random.seed(1)
     #"C:\Users\zidda\Downloads\inputs_L10_pbcTrue_h0-1.0_j0-1.0_seed1.npz"
@@ -69,7 +69,7 @@ def translate_Neil_NP_to_graph(filename='inputs_L50_pbcTrue_h0-1.0_j0-1.0_seed1.
         print(bonds)
         
         
-def generate_square_lattice(width, height, torus = True, visualize_on=False, disordered_mu = True, constant_mu = 1.0, disordered_lambda=True, constant_lambda = 0.8):
+def generate_square_lattice(width, height, torus = True, visualize_on=False, disordered_mu = True, constant_mu = 1.0, disordered_lambda=True, constant_lambda = 0.8, chain=True):
     #Self explanatory
     G = nk.graph.Graph(n=width*height, weighted = True, edgesIndexed=True)
     
@@ -108,6 +108,9 @@ def generate_square_lattice(width, height, torus = True, visualize_on=False, dis
             G.addEdge(this_node, (this_node+width-1))
                 
     
+    if chain:
+        G.removeSelfLoops()
+    
     if visualize_on:
         print("generated; now visualizing")
         visualize(G)
@@ -124,20 +127,40 @@ def generate_square_lattice(width, height, torus = True, visualize_on=False, dis
     
     #init mu values
     healing_factor = G.attachNodeAttribute("mu", float)
-    components = G.attachNodeAttribute("components", str)
+    
+    #node & edge components have the *like* components that have merged to form any given edge
+    components = G.attachNodeAttribute("components", str) 
+    edge_components = G.attachEdgeAttribute("e_comp", str)
+    
+    #mu & lambda components have *all* components that have contributed to the mu or lambda values of a node/edge, respectively
+    # these are stored as n123_e(34,42)_n53_ ..., with contributing nodes denoted n, and contributing edges denoted e
+    mu_components = G.attachNodeAttribute("mu_comp", str)
+    lambda_components = G.attachEdgeAttribute("lambda_comp", str)
+    
     #add disorder to healing values too if desired
     if disordered_mu:
         for u in G.iterNodes():
-            mu = np.random.random()
-            healing_factor[u] = mu
+            mu = scipy.stats.powerlaw.rvs(4, size=1)
+            #print(mu)
+            #mu = np.random.random()
+            healing_factor[u] = mu[0]
             is_active[u] = 0
             components[u] = f"{u}"
+            mu_components[u] = f"n{u}"
     else:
         for u in G.iterNodes():
             healing_factor[u] = constant_mu
             is_active[u] = 0
             components[u] = f"{u}"
-    
+            mu_components[u] = f"n{u}"
+            
+    for edge in G.iterEdges():
+        lambda_val = scipy.stats.powerlaw.rvs(4, size=1)
+        
+        G.setWeight(edge[0], edge[1], lambda_val[0])
+        eid = G.edgeId(edge[0], edge[1])
+        edge_components[eid] = f"{edge}"
+        lambda_components[eid] = f"e({edge[0]},{edge[1]})"
     print("done!")
         
     return G
@@ -227,26 +250,277 @@ def generate_arbitrary_graph(size, num_clusters, p_in, p_out):
     """
     #nk.graphio.writeGraph(G, "network.gml", nk.Format.GML)
     return G #, mu_arr, lambda_arr
+  
+def convert_from_sophie_in(x, y, r):
+    G = nk.graph.Graph(n=len(x), weighted=True, edgesIndexed=True)
+    num_nodes = len(x)
+    for node in range(num_nodes):
+        #visualize(G)
+        for other_node in range(num_nodes):
+            if other_node != node:
+                d = math.sqrt((x[node]-x[other_node])**2 + (y[node]-y[other_node])**2)
+                if d < r[node]:
+                    G.addEdge(node, other_node, w=1/d, checkMultiEdge=True)
+                    
+    #init activity values (infected)
+    is_active = G.attachNodeAttribute("active", int)
     
+    #init mu values
+    healing_factor = G.attachNodeAttribute("mu", float)
+    
+    #node & edge components have the *like* components that have merged to form any given edge
+    components = G.attachNodeAttribute("components", str) 
+    edge_components = G.attachEdgeAttribute("e_comp", str)
+    
+    #mu & lambda components have *all* components that have contributed to the mu or lambda values of a node/edge, respectively
+    # these are stored as n123_e(34,42)_n53_ ..., with contributing nodes denoted n, and contributing edges denoted e
+    mu_components = G.attachNodeAttribute("mu_comp", str)
+    lambda_components = G.attachEdgeAttribute("lambda_comp", str)
+    
+    #add disorder to healing values too if desired
+    for u in G.iterNodes():
+        mu = np.random.random()
+        healing_factor[u] = mu
+        is_active[u] = 0
+        components[u] = f"{u}"
+        mu_components[u] = f"n{u}"
+            
+    for edge in G.iterEdges():
+        eid = G.edgeId(edge[0], edge[1])
+        edge_components[eid] = f"{edge}"
+        lambda_components[eid] = f"e({edge[0]},{edge[1]})"
+    return G
 
+def sophie_test():
+    
+    x = [200, 400]
+    y = [150, 150]
+    r = [10, 10]
+    
+    G = convert_from_sophie_in(x, y, r)
+    visualize(G)
+    try:
+        G = sdrg_to_completion(G, visualizeSteps=True, verbose=True)
+    except:
+        print("no connections")    
+    
+    x = [200, 400]
+    y = [150, 150]
+    r = [250, 250]
+    
+    G = convert_from_sophie_in(x, y, r)
+    visualize(G)
+    try:
+        G = sdrg_to_completion(G, visualizeSteps=True, verbose=True)
+    except:
+        print("no connections")    
+    
+    x = [100, 300]
+    y = [200, 200]
+    r = [200, 200]
+    
+    G = convert_from_sophie_in(x, y, r)
+    visualize(G)
+    try:
+        G = sdrg_to_completion(G, visualizeSteps=True, verbose=True)
+    except:
+        print("no connections")    
+    
+    x = [100, 200, 300, 100, 200, 300, 100, 200, 300]
+    y = [100, 200, 300, 200, 100, 200, 300, 300, 100]
+    r = [150, 300, 10, 150, 150, 10, 10, 10, 10]
+    
+    G = convert_from_sophie_in(x, y, r)
+    visualize(G)
+    try:
+        G = sdrg_to_completion(G, visualizeSteps=True, verbose=True)
+    except:
+        print("no connections")    
+    x = [100, 200, 300, 100, 200, 300, 100, 200, 300]
+    y = [100, 200, 300, 200, 100, 200, 300, 300, 100]
+    r = [150, 400, 150, 10, 10, 10, 150, 10, 150]
+    
+    G = convert_from_sophie_in(x, y, r)
+    visualize(G)
+    try:
+        G = sdrg_to_completion(G, visualizeSteps=True, verbose=True)
+    except:
+        print("no connections")    
+    
+    x = [100, 200, 300, 100, 200, 300, 100, 200, 300]
+    y = [100, 200, 300, 200, 100, 200, 300, 300, 100]
+    r = [90, 300, 90, 150, 150, 150, 90, 150, 90]
+    
+    G = convert_from_sophie_in(x, y, r)
+    visualize(G)
+    try:
+        G = sdrg_to_completion(G, visualizeSteps=True, verbose=True)
+    except:
+        print("no connections")    
+    
+    x = [100, 200, 300, 100, 200, 300, 100, 200, 300]
+    y = [100, 200, 300, 200, 100, 200, 300, 300, 100]
+    r = [110, 300, 110, 150, 150, 150, 110, 150, 110]
+    
+    G = convert_from_sophie_in(x, y, r)
+    visualize(G)
+    try:
+        G = sdrg_to_completion(G, visualizeSteps=True, verbose=True)
+    except:
+        print("no connections")    
+    
+    x = [100, 150, 240, 290]
+    y = [200, 200, 200, 200]
+    r = [100, 60, 100, 60]
+    
+    G = convert_from_sophie_in(x, y, r)
+    visualize(G)
+    try:
+        G = sdrg_to_completion(G, visualizeSteps=True, verbose=True)
+    except:
+        print("no connections")    
+    
+    x = [100, 150, 240, 290]
+    y = [200, 200, 200, 200]
+    r = [60, 60, 100, 60]
+    
+    G = convert_from_sophie_in(x, y, r)
+    visualize(G)
+    try:
+        G = sdrg_to_completion(G, visualizeSteps=True, verbose=True)
+    except:
+        print("no connections")    
+    
+    x = [100, 200, 300, 300]
+    y = [100, 100, 100, 300]
+    r = [120, 120, 120, 250]
+    
+    G = convert_from_sophie_in(x, y, r)
+    visualize(G)
+    try:
+        G = sdrg_to_completion(G, visualizeSteps=True, verbose=True)
+    except:
+        print("no connections")    
+    
+    x = [200, 400, 200, 400]
+    y = [200, 200, 400, 400]
+    r = [250, 250, 250, 250]
+    
+    G = convert_from_sophie_in(x, y, r)
+    visualize(G)
+    try:
+        G = sdrg_to_completion(G, visualizeSteps=True, verbose=True)
+    except:
+        print("no connections")    
+    
+    x = [100, 200, 500]
+    y = [100, 100, 100]
+    r = [110, 110, 110]
+    
+    G = convert_from_sophie_in(x, y, r)
+    visualize(G)
+    try:
+        G = sdrg_to_completion(G, visualizeSteps=True, verbose=True)
+    except:
+        print("no connections")    
+    
+    x = [100, 200, 150]
+    y = [100, 100, 186.6]
+    r = [110, 110, 110]
+    
+    G = convert_from_sophie_in(x, y, r)
+    visualize(G)
+    try:
+        G = sdrg_to_completion(G, visualizeSteps=True, verbose=True)
+    except:
+        print("no connections")    
+    x = [99, 100, 200]
+    y = [300, 300, 300]
+    r = [99, 99, 199]
+    
+    G = convert_from_sophie_in(x, y, r)
+    visualize(G)
+    try:
+        G = sdrg_to_completion(G, visualizeSteps=True, verbose=True)
+    except:
+        print("no connections")    
+    
+    x = [200, 300, 400]
+    y = [200, 200, 200]
+    r = [300, 300, 300]
+    
+    G = convert_from_sophie_in(x, y, r)
+    visualize(G)
+    try:
+        G = sdrg_to_completion(G, visualizeSteps=True, verbose=True)
+    except:
+        print("no connections")    
+    
+    x = [100, 400, 700]
+    y = [200, 200, 200]
+    r = [350, 350, 350]
+    
+    G = convert_from_sophie_in(x, y, r)
+    visualize(G)
+    try:
+        G = sdrg_to_completion(G, visualizeSteps=True, verbose=True)
+    except:
+        print("no connections")    
+    
+    x = [300, 100, 300, 500, 300]
+    y = [300, 300, 100, 300, 500]
+    r = [210, 210, 210, 210, 210]
+    
+    G = convert_from_sophie_in(x, y, r)
+    visualize(G)
+    try:
+        G = sdrg_to_completion(G, visualizeSteps=True, verbose=True)
+    except:
+        print("no connections")    
+    
+    x = [100, 280, 460, 640, 820, 1000]
+    y = [200, 200, 200, 200, 200, 200]
+    r = [200, 200, 200, 200, 200, 200]
+    
+    G = convert_from_sophie_in(x, y, r)
+    visualize(G)
+    try:
+        G = sdrg_to_completion(G, visualizeSteps=True, verbose=True)
+    except:
+        print("no connections")    
+    
+    x = [200, 400, 450, 700, 850]
+    y = [200, 200, 200, 200, 200]
+    r = [220, 220, 220, 220, 220]
+    
+    G = convert_from_sophie_in(x, y, r)
+    visualize(G)
+    try:
+        G = sdrg_to_completion(G, visualizeSteps=True, verbose=True)
+    except:
+        print("no connections")    
+ 
 """ ------------------------------------ GRAPH SPARSIFICATION ------------------------------------ """
-    
 
-def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, decimation_log = [], visualizeStep = False):
+
+def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, decimation_log = [], sparsify_mode = True, sparsify_log = [], visualizeStep = False):
     """This method does a single iteration of the SDRG sparsification. 
         - G: This is a networkit graph. It should be fully-connected/only contain one component, and needs to have edge weights + mu values (healing factor) + components (initialized with each node's own index)
         - neil_mode: Neil has a sparsification algorithm that outputs, at the end, all of the decimated clusters. This toggle just changes to output to this for checking the sdrg results against his
         - decimated_sites: only relevant in neil mode; this stores the sites that are decimated in each step as clusters
         - logging_toggle: This is my own logging; it is at time of writing, not used. Basically just an alternative to neil_mode logging
         - decimation_log: decimation_log is to logging_toggle as decimated_sites is to neil_mode. tracks the edges that get maximum rule-d out each step
+        - sparsify_log: this contains all of the edges which were components of sites that were decimated
         - visualizeStep: visualizes the network AFTER applying the sdrg step using networkx. This gets reeeaaaalllllyyyy slow above like a hundred nodes or so
     """
-    
+    t0 = time.time_ns()
+    edge_components = G.getEdgeAttribute("e_comp", str)
     n_nodes = G.numberOfNodes()
     healing_factor = G.getNodeAttribute("mu", float)
     components = G.getNodeAttribute("components", str)
     is_active = G.getNodeAttribute("active", int)
-    
+    mu_components = G.getNodeAttribute("mu_comp", str)
+    lambda_components = G.getEdgeAttribute("lambda_comp", str)
     #Stopping condition
     if n_nodes == 1:
         print("Network is fully sparsified")
@@ -255,6 +529,8 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
         decimated_sites = np.append(decimated_sites, components[last_site[0]])
         if logging_toggle:
             return G, decimation_log
+        elif sparsify_mode:
+            return G, sparsify_log
         elif neil_mode:
             return G, decimated_sites
         return G
@@ -265,12 +541,13 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
             
     max_mu_lambda_index = np.argmax(np.concat((mu_arr[:,0], lambda_arr[:,0])))
     
+    t1 = time.time_ns()
     
     if max_mu_lambda_index > n_nodes-1: #true iff biggest value is a lambda
         edge_to_decimate = lambda_arr[max_mu_lambda_index-n_nodes, 1:] #np list of length 2
         
         #union the two sets containing neighbors of u and v
-        # sets automatically remove the duplicates. This now contains only the nodes which are neighbors of/connected to both
+        # sets automatically remove the duplicates. This now contains only the nodes which are neighbors of/connected to either
         pair_neighborhood = {u for u in G.iterNeighbors(edge_to_decimate[0])} | {v for v in G.iterNeighbors(edge_to_decimate[1])}
 
         #give a name to each side of the edge
@@ -292,6 +569,7 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
         healing_factor[k] = h_k
         #keep track of our components
         components[k] = f"{components[u]}_{components[v]}"
+        mu_components[k] = f"{mu_components[u]}_{mu_components[u]}_{lambda_components[G.edgeId(u,v)]}"
         is_active[k] = 0
         
         for neighbor in pair_neighborhood:
@@ -300,13 +578,39 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
             J_ui = G.weight(u, neighbor)
             J_vi = G.weight(v, neighbor)
             
+            
             new_edge_weight = max(J_ui, J_vi)
-            if logging_toggle:
-                if J_ui == new_edge_weight:
-                    decimation_log.append((v,neighbor))
-                else:
-                    decimation_log.append((u,neighbor))
             G.addEdge(k, neighbor, new_edge_weight)
+            eid = G.edgeId(k, neighbor)
+            if J_ui == new_edge_weight:
+                #print(get_list_of_edge_components(G, vneid))
+                uneid = G.edgeId(u, neighbor)
+                lambda_components[eid] = lambda_components[uneid]
+            else:
+                vneid = G.edgeId(v, neighbor)
+                lambda_components[eid] = lambda_components[vneid]
+            
+            if J_ui + J_vi > new_edge_weight: #checks that the maximum rule removes something; in other terms, that J_ui and J_vi both exist
+                uneid = G.edgeId(u, neighbor)
+                vneid = G.edgeId(v, neighbor)
+                if logging_toggle:
+                    if J_ui == new_edge_weight:
+                        #print(get_list_of_edge_components(G, vneid))
+                        edge_comp_list = get_list_of_edge_components(G, vneid)
+                        for i in edge_comp_list:
+                            decimation_log.append(i)
+                    else:
+                        edge_comp_list = get_list_of_edge_components(G, uneid)
+                        for i in edge_comp_list:
+                            decimation_log.append(i)
+                        #decimation_log.append((u,neighbor))
+                if logging_toggle:
+                    edge_components[eid] = f"{edge_components[uneid]}_{edge_components[vneid]}"
+            else:
+                #G.addEdge(k, neighbor, new_edge_weight)
+                #eid = G.edgeId(k, neighbor)
+                if logging_toggle:
+                    edge_components[eid] = f"{edge_components[G.edgeId(u, neighbor)]}" if G.weight(u, neighbor) > 0 else f"{edge_components[G.edgeId(v, neighbor)]}"
             
         #remove nodes at end. We had to wait b/c otherwise we can't calculate weights in loop
         G.removeNode(u)
@@ -318,8 +622,11 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
         site_to_decimate = mu_arr[max_mu_lambda_index,1]
         #print(f"decimating site {site_to_decimate} with mu = {healing_factor[site_to_decimate]}")
         #build a set with all of the neighbors
-        neighborhood = {u for u in G.iterNeighbors(site_to_decimate)}
+        #print(mu_components[site_to_decimate])
+        sparsify_log.append(mu_components[site_to_decimate])
         
+        neighborhood = {u for u in G.iterNeighbors(site_to_decimate)}
+        #print(len(neighborhood))
         #I've forgotten why I did this, it seems kind of stupid but I don't really want to bother changing it right now. 
         #it can probably be replaced by neighbors_checked = set()
         neighbors_checked = {-1}
@@ -334,7 +641,7 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
                     # i = decimated site 
                     # j, k = neighbors
     
-                    J_jk = G.weight(neighbor, other_neighbor)
+                    J_jk = G.weight(neighbor, other_neighbor) # can be 0 if there was no link
                     #r_hi = -math.log(healing_factor[site_to_decimate])
                     #kappa_ik = -math.log(G.weight(site_to_decimate, other_neighbor))
                     #kappa_ij = -math.log(G.weight(neighbor, site_to_decimate))
@@ -343,17 +650,46 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
                     a = (G.weight(site_to_decimate, other_neighbor)*G.weight(neighbor, site_to_decimate))/healing_factor[site_to_decimate]
                     
                     new_weight = max(J_jk, a)
-                    if logging_toggle:
-                        if J_jk == new_weight:
-                            decimation_log.append((site_to_decimate, other_neighbor))
-                            decimation_log.append((site_to_decimate, neighbor))
-                        else:
-                            decimation_log.append((neighbor, other_neighbor))
+                    
                     #returns whether the addition was successful (i.e, didn't make a multiedge)
                     add_success = G.addEdge(neighbor, other_neighbor, new_weight, checkMultiEdge = True)
                     if not add_success:
                         G.setWeight(neighbor, other_neighbor, new_weight)
-                    #G.setWeight(neighbor, other_neighbor, new_weight)
+                        
+                    
+                    #this edge will always exist
+                    noneid = G.edgeId(neighbor, other_neighbor) #neighbor-other neighbor edge i d
+                    stdneid = G.edgeId(site_to_decimate, neighbor) #site to decimate-neighbor edge i d
+                    stdoneid = G.edgeId(site_to_decimate, other_neighbor)
+                    
+                    if logging_toggle:
+                        
+                        
+                        if J_jk == new_weight:
+                            
+                            edge_comp_list = get_list_of_edge_components(G, stdoneid)
+                            for i in edge_comp_list:
+                                decimation_log.append(i)
+                            edge_comp_list = get_list_of_edge_components(G, stdneid)
+                            for i in edge_comp_list:
+                                decimation_log.append(i)
+                            #decimation_log.append((site_to_decimate, other_neighbor))
+                            #decimation_log.append((site_to_decimate, neighbor))
+                            
+                        elif J_jk > 0: # for this elif and the else, we are modifying the weight by the weights J_ui and J_vi, so add those
+                            edge_comp_list = get_list_of_edge_components(G, noneid)
+                            for i in edge_comp_list:
+                                decimation_log.append(i)    
+                            #decimation_log.append((neighbor, other_neighbor))
+                            
+                            edge_components[(noneid)] = f"{edge_components[stdneid]}_{edge_components[stdoneid]}"
+                        else:
+                            edge_components[(noneid)] = f"{edge_components[stdneid]}_{edge_components[stdoneid]}"
+                    
+                    
+                    if a == new_weight: # J_ij * J_ik / h_i
+                        lambda_components[noneid] = f"{lambda_components[stdneid]}_{lambda_components[stdoneid]}_{mu_components[site_to_decimate]}"
+                    
                     
             #The neighbor that just looped through all of the other neighbors will
             # have had all of its connections made and calculated, so no reason to 
@@ -368,24 +704,55 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
             pass
         #finally we get to actually remove the node
         G.removeNode(site_to_decimate)
-        
+    t2 = time.time_ns()
+    print(f"{(t1-t0)/1000000000}s for 0-1; {(t2-t1)/1000000000} for 1-2; {max_mu_lambda_index > n_nodes-1}")
+    
     #nk.graphio.writeGraph(G, f"network_{time.time_ns()}_T.gml", nk.Format.GML)
     if visualizeStep:
         visualize(G)
     if logging_toggle:
         return G, decimation_log
+    elif sparsify_mode:
+        return G, sparsify_log
     elif neil_mode:
         return G, decimated_sites
     return G
 
-def sdrg_to_completion(G, visualizeSteps = False):
+
+def sdrg_to_completion(G, visualizeSteps = False, verbose=False):
+    sparsify_log = []
+    if not verbose:
+        orig_n_nodes = G.numberOfNodes()
+        for i in range(G.numberOfNodes()):
+            t0 = time.time_ns()
+            G, sparsify_log = sdrg_step(G, logging_toggle = True, decimation_log=sparsify_log, visualizeStep=visualizeSteps)
+            t1 = time.time_ns()
+            print(f"step {i}/{orig_n_nodes} in {(t1-t0)/1000000000}s")
+        #print(decimated_sites)
+        
+        print("--------------------------")
+            
+        return G, sparsify_log
+    else:
+        for i in range(G.numberOfNodes()):
+            G, sparsify_log = sdrg_step_verbose(G, decimation_log=sparsify_log, visualizeStep=visualizeSteps)
+        #print(decimated_sites)
+        
+        print("--------------------------")
+            
+        return G, sparsify_log
+
+def sdrg_to_omega(G, target_omega, visualizeSteps = False):
     decimation_log = []
-    for i in range(G.numberOfNodes()):
+    omega = get_max_omega(G)
+    while omega > target_omega:
         G, decimation_log = sdrg_step(G, decimation_log=decimation_log, visualizeStep=visualizeSteps)
-    #print(decimated_sites)
+        omega = get_max_omega(G)
+    
+    print(f"sparsified to target omega {target_omega}; max omega at end is {omega}")
     print("--------------------------")
         
-    return G, decimation_log
+    return G
 
 def full_sdrg(G, visualizeSteps = False):
     decimated_sites = []
@@ -445,14 +812,276 @@ def prop_sdrg(G, proportion, visualizeSteps = False):
     return G
 
 
-def sdrg_sparsify(G, proportion):
+def sdrg_sparsify(G):
     G_tilde_1 = copy_graph(G)
     G_tilde_2 = copy_graph(G)
-    G_tilde_1, decimation_log = sdrg_to_completion(G_tilde_1)
-    for i in range(len(decimation_log)):
-        edge = decimation_log[i]
-        G_tilde_2.removeEdge(edge[0], edge[1])
+    mu_components = G_tilde_1.getNodeAttribute("mu_comp", str)
+    print("running sdrg")
+    G_tilde_1, sparsify_log = sdrg_to_completion(G_tilde_1)
+    print("finished sdrg; building sparsified network")
+    edges_to_include = []
+    for node_id in G_tilde_1.iterNodes(): #we don't know the index of the last node, so this directly gets us the object
+        list_of_components = mu_components[node_id].split("_")
+        #print(list_of_components)
+        for thing in list_of_components:
+            if thing[0] == 'e':
+                edges_to_include.append(eval(thing[1:]))
+                
+    #list_of_decimated_site_components = []
+    #print(sparsify_log)
+    for site_component in sparsify_log:
+        #print(site_component)
+        #clean_component = eval(site_component[1:]) if site_component[0] == 'n' else site_component
+        #components = site_components.split("_")
+        if site_component[0] != 'n':
+            edges_to_include.append(site_component)
+        #list_of_decimated_site_components.append(clean_component)
+        
+    """for thing in list_of_decimated_site_components:
+        if thing[0] == 'e':
+            edges_to_include.append(eval(thing[1:]))"""
+            
+    edges_to_include_set = set(edges_to_include)
+    all_edges_set = set([edge for edge in G_tilde_2.iterEdges()])
+    edges_to_remove = all_edges_set - edges_to_include_set
+    #instead run sdrg to some energy scale then remove all edges from the decimation log?
+    #print(decimation_log)
+    #no_duplicate_decimation_log = list(dict.fromkeys(decimation_log))
+    #print(edges_to_include_set)
+    print(f"at end we'll have  {len(edges_to_include_set)} edges")
+    for edge in edges_to_remove:
     
+        #edge = no_duplicate_decimation_log[i]
+        
+        #print(f"removed {edge[0]}, {edge[1]} with weight {G_tilde_2.weight(edge[0], edge[1])}")
+    
+        G_tilde_2.removeEdge(int(edge[0]), int(edge[1]))
+    print("done")
+    return G_tilde_2
+    
+
+def sdrg_sparsify_n_edges(G, n_edges):
+    G_tilde_1 = copy_graph(G)
+    G_tilde_2 = copy_graph(G)
+    
+    G_tilde_1, decimation_log = sdrg_to_completion(G_tilde_1)
+    
+    #instead run sdrg to some energy scale then remove all edges from the decimation log?
+    #print(decimation_log)
+    no_duplicate_decimation_log = list(dict.fromkeys(decimation_log))
+    print(len(no_duplicate_decimation_log))
+    print(f"at end we'll have  {n_edges} edges")
+    for i in range(int(G.numberOfNodes() - n_edges)):
+    
+        edge = no_duplicate_decimation_log[i]
+        
+        #print(f"removed {edge[0]}, {edge[1]} with weight {G_tilde_2.weight(edge[0], edge[1])}")
+    
+        G_tilde_2.removeEdge(int(edge[0]), int(edge[1]))
+    print("done with sdrg sparsification")
+    return G_tilde_2
+    
+
+def sdrg_step_verbose(G, neil_mode = False, decimated_sites=[], logging_toggle = True, decimation_log = [], visualizeStep = False):
+    """This method does a single iteration of the SDRG sparsification. 
+        - G: This is a networkit graph. It should be fully-connected/only contain one component, and needs to have edge weights + mu values (healing factor) + components (initialized with each node's own index)
+        - neil_mode: Neil has a sparsification algorithm that outputs, at the end, all of the decimated clusters. This toggle just changes to output to this for checking the sdrg results against his
+        - decimated_sites: only relevant in neil mode; this stores the sites that are decimated in each step as clusters
+        - logging_toggle: This is my own logging; it is at time of writing, not used. Basically just an alternative to neil_mode logging
+        - decimation_log: decimation_log is to logging_toggle as decimated_sites is to neil_mode. tracks the edges that get maximum rule-d out each step
+        - visualizeStep: visualizes the network AFTER applying the sdrg step using networkx. This gets reeeaaaalllllyyyy slow above like a hundred nodes or so
+    """
+    edge_components = G.getEdgeAttribute("e_comp", str)
+    n_nodes = G.numberOfNodes()
+    healing_factor = G.getNodeAttribute("mu", float)
+    components = G.getNodeAttribute("components", str)
+    is_active = G.getNodeAttribute("active", int)
+    mu_components = G.getNodeAttribute("mu_comp", str)
+    lambda_components = G.getEdgeAttribute("lambda_comp", str)
+    #Stopping condition
+    if n_nodes == 1:
+        print("Network is fully sparsified")
+        last_site = [u for u in G.iterNodes()]
+
+        decimated_sites = np.append(decimated_sites, components[last_site[0]])
+        if logging_toggle:
+            return G, decimation_log
+        elif neil_mode:
+            return G, decimated_sites
+        return G
+     
+    #Put all mu and lambda values into a single np array so that we can easily choose the greatest value
+    mu_arr = np.array([np.array([healing_factor[u], u]).T for u in G.iterNodes()])
+    lambda_arr = np.array([np.array([G.weight(u,v), u, v]).T for u,v in G.iterEdges()])
+            
+    max_mu_lambda_index = np.argmax(np.concat((mu_arr[:,0], lambda_arr[:,0])))
+    #print(max_mu_lambda_index)
+    print(f"mu values are: {mu_arr}")
+    print(f"lambda values are: {lambda_arr}")
+    
+    if max_mu_lambda_index > n_nodes-1: #true iff biggest value is a lambda
+        edge_to_decimate = lambda_arr[max_mu_lambda_index-n_nodes, 1:] #np list of length 2
+        
+        #union the two sets containing neighbors of u and v
+        # sets automatically remove the duplicates. This now contains only the nodes which are neighbors of/connected to either
+        pair_neighborhood = {u for u in G.iterNeighbors(edge_to_decimate[0])} | {v for v in G.iterNeighbors(edge_to_decimate[1])}
+
+        #give a name to each side of the edge
+        u = edge_to_decimate[0]
+        v = edge_to_decimate[1]
+        print(f"decimating edge {edge_to_decimate} with lambda = {G.weight(u,v)}") 
+
+        #note that, as a result of this step, this sdrg algorithm creates new node indices up to 2x the original size of the graph. This is important for some methods like fast_random_choose()
+        k = G.addNode() # returns new node id, so k = new node id
+        #if logging_toggle:
+            #decimation_log.append
+            #decimation_log.append([len(decimation_log), edge_to_decimate, G.weight(u,v)])
+        
+        #TODO: use log and exp to convert mults and divides to adds and substracts
+        #calculate a new healing factor
+        #math.exp(math.log(healing_factor[u]) + math.log(healing_factor[v]) - math.log(G.weight(u,v)))
+        h_k = (healing_factor[u]*healing_factor[v])/(G.weight(u,v))
+
+        healing_factor[k] = h_k
+        #keep track of our components
+        components[k] = f"{components[u]}_{components[v]}"
+        mu_components[k] = f"{mu_components[u]}_{mu_components[u]}_{lambda_components[G.edgeId(u,v)]}"
+        is_active[k] = 0
+        
+        for neighbor in pair_neighborhood:
+            #we are merging nodes u and v
+            # i for each neighbor
+            J_ui = G.weight(u, neighbor)
+            J_vi = G.weight(v, neighbor)
+            
+            
+            new_edge_weight = max(J_ui, J_vi)
+            G.addEdge(k, neighbor, new_edge_weight)
+            eid = G.edgeId(k, neighbor)
+            if J_ui == new_edge_weight:
+                #print(get_list_of_edge_components(G, vneid))
+                uneid = G.edgeId(u, neighbor)
+                lambda_components[eid] = lambda_components[uneid]
+            else:
+                vneid = G.edgeId(v, neighbor)
+                lambda_components[eid] = lambda_components[vneid]
+            
+            if J_ui + J_vi > new_edge_weight: #checks that the maximum rule removes something; in other terms, that J_ui and J_vi both exist
+                uneid = G.edgeId(u, neighbor)
+                vneid = G.edgeId(v, neighbor)
+                if logging_toggle:
+                    if J_ui == new_edge_weight:
+                        #print(get_list_of_edge_components(G, vneid))
+                        edge_comp_list = get_list_of_edge_components(G, vneid)
+                        for i in edge_comp_list:
+                            decimation_log.append(i)
+                    else:
+                        edge_comp_list = get_list_of_edge_components(G, uneid)
+                        for i in edge_comp_list:
+                            decimation_log.append(i)
+                        #decimation_log.append((u,neighbor))
+                
+                edge_components[eid] = f"{edge_components[uneid]}_{edge_components[vneid]}"
+            else:
+                #G.addEdge(k, neighbor, new_edge_weight)
+                #eid = G.edgeId(k, neighbor)
+                edge_components[eid] = f"{edge_components[G.edgeId(u, neighbor)]}" if G.weight(u, neighbor) > 0 else f"{edge_components[G.edgeId(v, neighbor)]}"
+            
+        #remove nodes at end. We had to wait b/c otherwise we can't calculate weights in loop
+        G.removeNode(u)
+        G.removeNode(v)
+        
+    else: #true iff biggest val is a mu
+        
+        #since we put the mu_arr in front of the lambda_arr, we can directly access the mu_arr list with our max_mu_lambda_index without getting indexing errors
+        site_to_decimate = mu_arr[max_mu_lambda_index,1]
+        #print(f"decimating site {site_to_decimate} with mu = {healing_factor[site_to_decimate]}")
+        #build a set with all of the neighbors
+        neighborhood = {u for u in G.iterNeighbors(site_to_decimate)}
+        
+        #I've forgotten why I did this, it seems kind of stupid but I don't really want to bother changing it right now. 
+        #it can probably be replaced by neighbors_checked = set()
+        neighbors_checked = {-1}
+        neighbors_checked.remove(-1)
+        
+        for neighbor in neighborhood:
+            s = neighborhood - neighbors_checked # s is the set of unchecked neighbors. For high-degree networks this will be a significant speedup but probably not so for lattices
+            s.remove(neighbor) #because we've already checked it
+            if s: #... has any elements
+                for other_neighbor in s:
+                    # before change to sets it was this: np.delete(neighborhood, neighbor).delete(neighbors_checked): 
+                    # i = decimated site 
+                    # j, k = neighbors
+    
+                    J_jk = G.weight(neighbor, other_neighbor) # can be 0 if there was no link
+                    #r_hi = -math.log(healing_factor[site_to_decimate])
+                    #kappa_ik = -math.log(G.weight(site_to_decimate, other_neighbor))
+                    #kappa_ij = -math.log(G.weight(neighbor, site_to_decimate))
+                    
+                    #this is a long expression so I make it a variable. It's really just lambda_ui*lambda_uj/mu_u
+                    a = (G.weight(site_to_decimate, other_neighbor)*G.weight(neighbor, site_to_decimate))/healing_factor[site_to_decimate]
+                    
+                    new_weight = max(J_jk, a)
+                    
+                    #returns whether the addition was successful (i.e, didn't make a multiedge)
+                    add_success = G.addEdge(neighbor, other_neighbor, new_weight, checkMultiEdge = True)
+                    if not add_success:
+                        G.setWeight(neighbor, other_neighbor, new_weight)
+                        
+                    
+                    #this edge will always exist
+                    noneid = G.edgeId(neighbor, other_neighbor) #neighbor-other neighbor edge i d
+                    stdneid = G.edgeId(site_to_decimate, neighbor) #site to decimate-neighbor edge i d
+                    stdoneid = G.edgeId(site_to_decimate, other_neighbor)
+                    if logging_toggle:
+                        
+                        
+                        if J_jk == new_weight:
+                            edge_comp_list = get_list_of_edge_components(G, stdoneid)
+                            for i in edge_comp_list:
+                                decimation_log.append(i)
+                            edge_comp_list = get_list_of_edge_components(G, stdneid)
+                            for i in edge_comp_list:
+                                decimation_log.append(i)
+                            #decimation_log.append((site_to_decimate, other_neighbor))
+                            #decimation_log.append((site_to_decimate, neighbor))
+                            
+                        elif J_jk > 0: # for this elif and the else, we are modifying the weight by the weights J_ui and J_vi, so add those
+                            edge_comp_list = get_list_of_edge_components(G, noneid)
+                            for i in edge_comp_list:
+                                decimation_log.append(i)    
+                            #decimation_log.append((neighbor, other_neighbor))
+                            
+                            edge_components[(noneid)] = f"{edge_components[stdneid]}_{edge_components[stdoneid]}"
+                        else:
+                            edge_components[(noneid)] = f"{edge_components[stdneid]}_{edge_components[stdoneid]}"
+                    
+                    if a == new_weight: # J_ij * J_ik / h_i
+                        lambda_components[noneid] = f"{lambda_components[stdneid]}_{lambda_components[stdoneid]}_{mu_components[site_to_decimate]}"
+                    
+                    
+            #The neighbor that just looped through all of the other neighbors will
+            # have had all of its connections made and calculated, so no reason to 
+            # do anything to it for the rest of the loop. This just preserves the 
+            # action done in the line with s.remove(neighbor) for future loops
+            neighbors_checked.add(neighbor)
+            
+        decimated_sites = np.append(decimated_sites, components[site_to_decimate])
+        print(f"decimated site {site_to_decimate} with components {components[site_to_decimate]}")
+        if logging_toggle:
+            #decimation_log.append([len(decimation_log), site_to_decimate, healing_factor[site_to_decimate]])
+            pass
+        #finally we get to actually remove the node
+        G.removeNode(site_to_decimate)
+        
+    #nk.graphio.writeGraph(G, f"network_{time.time_ns()}_T.gml", nk.Format.GML)
+    if visualizeStep:
+        visualize(G)
+    if logging_toggle:
+        return G, decimation_log
+    elif neil_mode:
+        return G, decimated_sites
+    return G
 
 
 
@@ -949,6 +1578,7 @@ def SMDS_sparsifier(G, chi, output_num_components = False, viz = False):
     if output_num_components:
         return B, number_of_components(B)
     return B
+
 
 def get_neil_output(G):
     decimated_sites = []
@@ -1480,7 +2110,7 @@ def sparsified_DCP(G, track_TOA=False, quasistationary = True, t_max = 1, random
         return df
 
 
-def sparsified_DCP_fast(G, track_TOA=False, quasistationary = True, t_max = 1, random_start = True, start_node = 0, original_graph_size = 100):
+def sparsified_DCP_fast_old(G, track_TOA=False, quasistationary = True, t_max = 1, random_start = True, start_node = 0, original_graph_size = 100):
     patient_zero = 0
     healing_factor = G.getNodeAttribute("mu", float)
     is_active = G.getNodeAttribute("active", int)
@@ -1742,6 +2372,597 @@ def sparsified_DCP_fast(G, track_TOA=False, quasistationary = True, t_max = 1, r
         return transition_times
 
 
+def sparsified_DCP_fast(G, track_TOA=False, quasistationary = True, t_max = 1, random_start = True, start_node = 0, original_graph_size = 100):
+
+    patient_zero = 0
+    healing_factor = G.getNodeAttribute("mu", float)
+    is_active = G.getNodeAttribute("active", int)
+    components = G.getNodeAttribute("components", str)
+    nodes = list(G.iterNodes())
+    active_nodes = set([u for u in G.iterNodes() if is_active[u] == 1])
+    
+    transition_times = {site : [] for site in range(original_graph_size)}
+    
+
+    if random_start and len(active_nodes) == 0:
+        found_patient_zero_in_largest_component = False
+        
+        cc = nk.components.ConnectedComponents(G)
+        cc.run()
+        
+        sizes = cc.getComponentSizes()  # Returns a dict: {component_id: size}
+        largest_component_id = max(sizes, key=sizes.get)
+        s=0
+        while not found_patient_zero_in_largest_component:
+            s = np.random.randint(0, len(nodes))
+            
+            node_to_check = s  
+            node_component_id = cc.componentOfNode(node_to_check)
+        
+            found_patient_zero_in_largest_component = (node_component_id == largest_component_id)
+        
+        
+        patient_zero = nodes[s]
+        is_active[patient_zero] = 1
+        N_active = 1
+        
+        active_nodes.add(patient_zero)
+        #print(patient_zero)
+    elif len(active_nodes) == 0:
+        #if we give an invalid start node, find the cluster that it's in and make that cluster the start node
+        #print(start_node)
+        """node_list = [u for u in G.iterNodes()]
+        #print(start_node in node_list)
+        if start_node not in [u for u in G.iterNodes()]:
+            for site in G.iterNodes():
+                c = components[site].split("_")
+                #print(f"site {site} components are {c}")
+                if str(start_node) in c:
+                    print(site)
+                    start_node = site
+        """        
+        
+        start_node = get_site_location(start_node, G)
+            
+        is_active[start_node] = 1
+        N_active = 1
+        #print(start_node)
+        active_nodes.add(start_node)
+    else:
+        N_active = len(active_nodes)
+        
+    for site in active_nodes:
+        #give every node that starts out being active a transition at 0 to represent the initial condition
+        #print(site)
+        #print(active_nodes)
+        #nnn = [components[u] for u in G.iterNodes()]
+        #print(nnn)
+        #print(components[site])
+        c = components[site].split("_")
+        
+        for component in c:
+            #larger node indices appear after sparsification (even though there are fewer nodes), so this prevents out of bounds errors
+            transition_times[int(component)].append(0)
+    
+    step_counter = 0 #used just to draw updates every once in a while
+    TOA_tracker = set()
+    
+    if track_TOA:
+        TOA_tracker.add((0, patient_zero, components[patient_zero]))
+        
+    """
+    This differs from the original sparsified_DCP_fast bc it uses a slightly 
+    different algorithm to run the CP, modified from 'Simulating the contact 
+    process in heterogeneous environments' by Fallert et al., 2008. 
+    """
+    t = 0
+    #print(f"beginning infection")
+    
+    exposed_edges = set([
+            (u,v) 
+            for u in active_nodes #outer
+            for v in G.iterNeighbors(u) #inner
+        ])
+    
+    deltaT = 0
+    
+    #the graph size is our resolution, so t_max*graph_size gives us the proper timesteps.
+    #seconds = np.linspace(0, t_max, num=(round(t_max)*original_graph_size)+1)
+    #need to make sure that the array is large enough to hold 
+    
+    #df = pd.DataFrame(False, index=np.arange(original_graph_size), columns=seconds) 
+    #print(active_nodes)
+
+    #print(exposed_edges)
+    
+    #for i in active_nodes:
+        #print(G.degree(i))
+
+    lambda_max = max([G.weight(u, v) for u,v in exposed_edges]) 
+    
+
+    Q_list = []
+    for u in G.iterNodes():
+        sum_neighbor_weights = sum([v[1] for v in G.iterNeighborsWeights(u)])
+        #a = list(G.iterNeighborsWeights(u))
+        Q_i = healing_factor[u] + sum_neighbor_weights
+        Q_list.append(Q_i)
+    #Q_list = [healing_factor[u] + sum([G.weight(u,v) for v in G.iterInNeighbors(u)]) for u in G.iterNodes()]
+    Q = max(Q_list)#2#max([healing_factor[u] + sum([G.weight(u,v) for v in G.iterInNeighbors(u)]) for u in G.iterNodes()])
+    
+
+    while t < t_max:
+        #t0=time.time_ns()
+        
+        N_active = len(active_nodes)
+        #print(N_active)
+        # the number of exposed nodes is the same as the number of edges connected to active sites
+        #N_exposed = len(exposed_edges)
+        #t1=time.time_ns()
+        #a = [G.weight(u, v) for u,v in exposed_edges]
+        #print(a)
+        #print(patient_zero)
+        #print(active_nodes)
+        #TODO Maybe change this so that we have an absolute maximum (across whole network) that we can use? Then no need to recompute and we get rid of this expensive check
+        
+
+        #print(lambda_max)        
+
+        u1 = np.random.random()
+        u2 = np.random.random()
+        #u3 = np.random.random()
+        
+        
+        #t1=time.time_ns()
+        #t2=0
+        #t3=0
+        #t4=0
+        #t5=0
+        deltaT = 0
+        
+        if N_active > 0:
+            #instead of using the standard method of converting set to list, then choosing from the list, we use this faster function. 
+            #we need to choose from 0->2*original_size because after full sparsification we could get indices up to 2x the original max index
+            random_site = fast_random_choose(active_nodes, 0, 2*original_graph_size)
+            #random_site = np.random.choice(list(active_nodes)) #this is the only time we need active_nodes to be ordered, so we make a list for it
+            mu_i = healing_factor[random_site]
+            
+            prob_to_heal = mu_i / Q #(mu_i*N_active)/((mu_i*N_active)+N_exposed)
+            neighbor_edge_weights = [u[1] for u in G.iterNeighborsWeights(random_site)]
+            lambda_i = sum(neighbor_edge_weights)
+            prob_to_infect = lambda_i / Q
+
+            #t2=time.time_ns()
+            #t4=time.time_ns()
+            
+            if u1 <= prob_to_heal and not (quasistationary and N_active == 1):
+                #print("healing")
+                #choose random node to heal?
+                #site_to_heal = np.random.choice(tuple(active_nodes)) #active_nodes[np.random.randint(0, len(active_nodes))] #np.random.choice(active_nodes_list, p=heal_pmf)
+
+                is_active[random_site] = 0
+                
+                #newly_unexposed_neighbors = [edge for edge in exposed_edges if edge[0] == random_site]
+                #for neighbor in G.iterNeighbors(random_site):
+                #    if G.weight(random_site, neighbor) == lambda_max:
+                #        exposed_edges.remove((random_site, neighbor))
+                #        if len(exposed_edges) > 0:
+                #            lambda_max = max([G.weight(u, v) for u,v in exposed_edges]) 
+                #        else:
+                #            lambda_max = 0
+                #            print(f"{N_active} nodes are active at t={t} after {step_counter} steps. The last timestep was {deltaT}")
+                #            return transition_times
+                #    else:
+                #        exposed_edges.remove((random_site, neighbor))
+                
+                for neighbor in G.iterNeighbors(random_site):
+                    exposed_edges.remove((random_site, neighbor))
+                    
+                active_nodes.remove(random_site)
+                if track_TOA:
+                    TOA_tracker.add((t, random_site, components[random_site]))
+                    
+                #we could calculate df_col above "if N_active > 0" bc its global, but there are some wasted actions so may as well wait until we know we need it!
+                #df_col = find_lt(seconds, t)
+                for site in components[random_site].split("_"):
+                    #site_index = int(site)
+                    
+                    #df.iloc[site_index, df_col:] = np.where(df.iloc[site_index, df_col:] == True, False, True)
+                    
+                    transition_times[int(site)].append(t)
+
+                    #df = swap_column_vals_after_k(df, site_index, df_col)
+                #= active_nodes[active_nodes!=site_to_heal]
+                #print(f"healed site {active_nodes[site_to_heal]}")
+                
+                deltaT = 1/(Q*(N_active-1))
+                #t += deltaT
+                #t5=time.time_ns()
+                #print("heal")
+                
+            elif u2 < prob_to_infect:
+                #print("spreading")
+                #For each edge that /could/ transmit an infection, the probability of choosing is proportional to the edge's lambda value
+                #edge_transmission_chances = np.array([G.weight(u,v) for u,v in exposed_edges])
+                #transmission_pmf = edge_transmission_chances*(1/sum(edge_transmission_chances))
+                #infection_chances_list = infection_chances_list*(1/sum(infection_chances_list))
+                
+                #print(f"active are {active_nodes}")
+                #exposed_sites = exposed_edges[:, 1]
+                exposed_sites = list(G.iterNeighbors(random_site))
+                if len(exposed_sites) > 0:
+                    #exposed_sites = list(G.iterNeighbors(random_site))#[site for site in G.iterNeighbors(random_site)]
+                    #temp = [u[1] for u in G.iterNeighborsWeights(random_site)]
+                    exposed_sites_pmf = np.array(neighbor_edge_weights)*(1/lambda_i)
+                    site_to_infect = np.random.choice(exposed_sites, p=exposed_sites_pmf)
+                    
+                    
+                    #print("infecting")
+                    is_active[site_to_infect] = 1
+                    
+                    active_nodes.add(site_to_infect)# = np.append(active_nodes, site_to_infect)
+                    newly_exposed_neighbors = [(site_to_infect,v) 
+                            for v in G.iterNeighbors(site_to_infect) #inner
+                        ]
+                    for edge in newly_exposed_neighbors:
+                        exposed_edges.add(edge)
+                        newWeight = G.weight(edge[0], edge[1])
+                        if newWeight > lambda_max:
+                            lambda_max = newWeight
+                    if track_TOA:
+                        TOA_tracker.add((t, site_to_infect, components[site_to_infect]))
+                    
+                    #df_col = find_lt(seconds, t)
+                    for site in components[site_to_infect].split("_"):
+                        #site_index = int(site)
+                        #df.iloc[site_index, df_col:] = np.where(df.iloc[site_index, df_col:] == True, False, True)
+                        
+                        transition_times[int(site)].append(t)
+                        #df = swap_column_vals_after_k(df, site_index, df_col)
+                        
+                        
+                    deltaT = 1/(Q*(N_active+1))
+                    #t += deltaT
+                    
+                    #t5=time.time_ns()
+                    #print("inf")
+                    
+            else:
+                #print("wasting")
+                deltaT = 1/(Q*N_active)
+            
+                
+            t += deltaT
+                    #t5=time.time_ns()
+                    #print("waste")
+            #t3=time.time_ns()
+                
+            #print("--")
+            #print((t3-t0)/1000000000)
+            #print((t5-t4)/1000000000)
+            #print((t2-t1)/1000000000)
+            
+            
+            step_counter+=1
+        else:
+            print(f"Entered the absorbing state after {step_counter} timesteps at t = {t}, the last timestep was {deltaT}")
+            break
+            #t = t_max
+        #print((1/1000000000)*(time.time_ns()-t0))
+                                 #THIS BLOCK VISUALIZES THE DCP AT VARIOUS STEPS
+        if step_counter%5000 == 0:
+            pass
+            #print(f"t={t} --- {N_active} nodes are active")
+            #visualize(G, active_nodes=active_nodes)
+        
+
+        
+    print(f"{N_active} nodes are active at t={t} after {step_counter} steps. The last timestep was {deltaT}")
+    if track_TOA:
+        return TOA_tracker
+    else:
+        return transition_times
+
+
+
+def sparsified_DCP_fast_memsafe(G, track_TOA=False, quasistationary = True, t_max = 1, random_start = True, start_node = 0, original_graph_size = 100):
+
+    patient_zero = 0
+    healing_factor = G.getNodeAttribute("mu", float)
+    is_active = G.getNodeAttribute("active", int)
+    components = G.getNodeAttribute("components", str)
+    nodes = list(G.iterNodes())
+    active_nodes = set([u for u in G.iterNodes() if is_active[u] == 1])
+    
+    transition_times = {site : [0, 0, 0, False] for site in range(original_graph_size)}
+    #          t_active, t_inactive, t_lastTransition, False=last transition was active->inactive
+
+    if random_start and len(active_nodes) == 0:
+        found_patient_zero_in_largest_component = False
+        
+        cc = nk.components.ConnectedComponents(G)
+        cc.run()
+        
+        sizes = cc.getComponentSizes()  # Returns a dict: {component_id: size}
+        largest_component_id = max(sizes, key=sizes.get)
+        s=0
+        while not found_patient_zero_in_largest_component:
+            s = np.random.randint(0, len(nodes))
+            
+            node_to_check = s  
+            node_component_id = cc.componentOfNode(node_to_check)
+        
+            found_patient_zero_in_largest_component = (node_component_id == largest_component_id)
+        
+        
+        patient_zero = nodes[s]
+        is_active[patient_zero] = 1
+        N_active = 1
+        
+        active_nodes.add(patient_zero)
+        #print(patient_zero)
+    elif len(active_nodes) == 0:
+        #if we give an invalid start node, find the cluster that it's in and make that cluster the start node
+        #print(start_node)
+        """node_list = [u for u in G.iterNodes()]
+        #print(start_node in node_list)
+        if start_node not in [u for u in G.iterNodes()]:
+            for site in G.iterNodes():
+                c = components[site].split("_")
+                #print(f"site {site} components are {c}")
+                if str(start_node) in c:
+                    print(site)
+                    start_node = site
+        """        
+        
+        start_node = get_site_location(start_node, G)
+            
+        is_active[start_node] = 1
+        N_active = 1
+        #print(start_node)
+        active_nodes.add(start_node)
+    else:
+        N_active = len(active_nodes)
+        
+    for site in active_nodes:
+        #give every node that starts out being active a transition at 0 to represent the initial condition
+        #print(site)
+        #print(active_nodes)
+        #nnn = [components[u] for u in G.iterNodes()]
+        #print(nnn)
+        #print(components[site])            
+        
+        #larger node indices appear after sparsification (even though there are fewer nodes), so this prevents out of bounds errors
+        c = components[site].split("_")
+        
+        for component in c:
+            transition_times[int(component)] = [0, 0, 0, True]
+    
+    step_counter = 0 #used just to draw updates every once in a while
+    TOA_tracker = set()
+    
+    if track_TOA:
+        TOA_tracker.add((0, patient_zero, components[patient_zero]))
+        
+    """
+    This differs from the original sparsified_DCP_fast bc it only tracks the 
+    total times that each node is infected/healthy for instead of tracking 
+    every transition. 
+    """
+    t = 0
+    #print(f"beginning infection")
+    
+    exposed_edges = set([
+            (u,v) 
+            for u in active_nodes #outer
+            for v in G.iterNeighbors(u) #inner
+        ])
+    
+    deltaT = 0
+    
+    #the graph size is our resolution, so t_max*graph_size gives us the proper timesteps.
+    #seconds = np.linspace(0, t_max, num=(round(t_max)*original_graph_size)+1)
+    #need to make sure that the array is large enough to hold 
+    
+    #df = pd.DataFrame(False, index=np.arange(original_graph_size), columns=seconds) 
+    #print(active_nodes)
+
+    #print(exposed_edges)
+    
+    #for i in active_nodes:
+        #print(G.degree(i))
+
+    lambda_max = max([G.weight(u, v) for u,v in exposed_edges]) 
+    
+
+    Q_list = []
+    for u in G.iterNodes():
+        sum_neighbor_weights = sum([v[1] for v in G.iterNeighborsWeights(u)])
+        #a = list(G.iterNeighborsWeights(u))
+        Q_i = healing_factor[u] + sum_neighbor_weights
+        Q_list.append(Q_i)
+    #Q_list = [healing_factor[u] + sum([G.weight(u,v) for v in G.iterInNeighbors(u)]) for u in G.iterNodes()]
+    Q = max(Q_list)#2#max([healing_factor[u] + sum([G.weight(u,v) for v in G.iterInNeighbors(u)]) for u in G.iterNodes()])
+    
+
+    while t < t_max:
+        #t0=time.time_ns()
+        
+        N_active = len(active_nodes)
+        #print(N_active)
+        # the number of exposed nodes is the same as the number of edges connected to active sites
+        #N_exposed = len(exposed_edges)
+        #t1=time.time_ns()
+        #a = [G.weight(u, v) for u,v in exposed_edges]
+        #print(a)
+        #print(patient_zero)
+        #print(active_nodes)
+        #TODO Maybe change this so that we have an absolute maximum (across whole network) that we can use? Then no need to recompute and we get rid of this expensive check
+        
+
+        #print(lambda_max)        
+
+        u1 = np.random.random()
+        u2 = np.random.random()
+        #u3 = np.random.random()
+        
+        
+        #t1=time.time_ns()
+        #t2=0
+        #t3=0
+        #t4=0
+        #t5=0
+        deltaT = 0
+        
+        if N_active > 0:
+            #instead of using the standard method of converting set to list, then choosing from the list, we use this faster function. 
+            #we need to choose from 0->2*original_size because after full sparsification we could get indices up to 2x the original max index
+            random_site = fast_random_choose(active_nodes, 0, 2*original_graph_size)
+            #random_site = np.random.choice(list(active_nodes)) #this is the only time we need active_nodes to be ordered, so we make a list for it
+            mu_i = healing_factor[random_site]
+            
+            prob_to_heal = mu_i / Q #(mu_i*N_active)/((mu_i*N_active)+N_exposed)
+            neighbor_edge_weights = [u[1] for u in G.iterNeighborsWeights(random_site)]
+            lambda_i = sum(neighbor_edge_weights)
+            prob_to_infect = lambda_i / Q
+
+            #t2=time.time_ns()
+            #t4=time.time_ns()
+            
+            if u1 <= prob_to_heal and not (quasistationary and N_active == 1):
+                #print("healing")
+                #choose random node to heal?
+                #site_to_heal = np.random.choice(tuple(active_nodes)) #active_nodes[np.random.randint(0, len(active_nodes))] #np.random.choice(active_nodes_list, p=heal_pmf)
+
+                is_active[random_site] = 0
+                
+                #newly_unexposed_neighbors = [edge for edge in exposed_edges if edge[0] == random_site]
+                #for neighbor in G.iterNeighbors(random_site):
+                #    if G.weight(random_site, neighbor) == lambda_max:
+                #        exposed_edges.remove((random_site, neighbor))
+                #        if len(exposed_edges) > 0:
+                #            lambda_max = max([G.weight(u, v) for u,v in exposed_edges]) 
+                #        else:
+                #            lambda_max = 0
+                #            print(f"{N_active} nodes are active at t={t} after {step_counter} steps. The last timestep was {deltaT}")
+                #            return transition_times
+                #    else:
+                #        exposed_edges.remove((random_site, neighbor))
+                
+                for neighbor in G.iterNeighbors(random_site):
+                    exposed_edges.remove((random_site, neighbor))
+                    
+                active_nodes.remove(random_site)
+                if track_TOA:
+                    TOA_tracker.add((t, random_site, components[random_site]))
+                    
+                #we could calculate df_col above "if N_active > 0" bc its global, but there are some wasted actions so may as well wait until we know we need it!
+                #df_col = find_lt(seconds, t)
+                for site in components[random_site].split("_"):
+                    #site_index = int(site)
+                    
+                    #df.iloc[site_index, df_col:] = np.where(df.iloc[site_index, df_col:] == True, False, True)
+                    
+                    transition_times[int(site)][0] += t - transition_times[int(site)][2]
+                    transition_times[int(site)][2] = t
+                    transition_times[int(site)][3] = False
+
+                    #df = swap_column_vals_after_k(df, site_index, df_col)
+                #= active_nodes[active_nodes!=site_to_heal]
+                #print(f"healed site {active_nodes[site_to_heal]}")
+                
+                deltaT = 1/(Q*(N_active-1))
+                #t += deltaT
+                #t5=time.time_ns()
+                #print("heal")
+                
+            elif u2 < prob_to_infect:
+                #print("spreading")
+                #For each edge that /could/ transmit an infection, the probability of choosing is proportional to the edge's lambda value
+                #edge_transmission_chances = np.array([G.weight(u,v) for u,v in exposed_edges])
+                #transmission_pmf = edge_transmission_chances*(1/sum(edge_transmission_chances))
+                #infection_chances_list = infection_chances_list*(1/sum(infection_chances_list))
+                
+                #print(f"active are {active_nodes}")
+                #exposed_sites = exposed_edges[:, 1]
+                exposed_sites = list(G.iterNeighbors(random_site))
+                if len(exposed_sites) > 0:
+                    #exposed_sites = list(G.iterNeighbors(random_site))#[site for site in G.iterNeighbors(random_site)]
+                    #temp = [u[1] for u in G.iterNeighborsWeights(random_site)]
+                    exposed_sites_pmf = np.array(neighbor_edge_weights)*(1/lambda_i)
+                    site_to_infect = np.random.choice(exposed_sites, p=exposed_sites_pmf)
+                    
+                    
+                    #print("infecting")
+                    is_active[site_to_infect] = 1
+                    
+                    active_nodes.add(site_to_infect)# = np.append(active_nodes, site_to_infect)
+                    newly_exposed_neighbors = [(site_to_infect,v) 
+                            for v in G.iterNeighbors(site_to_infect) #inner
+                        ]
+                    for edge in newly_exposed_neighbors:
+                        exposed_edges.add(edge)
+                        newWeight = G.weight(edge[0], edge[1])
+                        if newWeight > lambda_max:
+                            lambda_max = newWeight
+                    if track_TOA:
+                        TOA_tracker.add((t, site_to_infect, components[site_to_infect]))
+                    
+                    #df_col = find_lt(seconds, t)
+                    for site in components[site_to_infect].split("_"):
+                        #site_index = int(site)
+                        #df.iloc[site_index, df_col:] = np.where(df.iloc[site_index, df_col:] == True, False, True)
+                        
+                        transition_times[int(site)][1] += t - transition_times[int(site)][2]
+                        transition_times[int(site)][2] = t
+                        transition_times[int(site)][3] = False
+                        #df = swap_column_vals_after_k(df, site_index, df_col)
+                        
+                        
+                    deltaT = 1/(Q*(N_active+1))
+                    #t += deltaT
+                    
+                    #t5=time.time_ns()
+                    #print("inf")
+                    
+            else:
+                #print("wasting")
+                deltaT = 1/(Q*N_active)
+            
+                
+            t += deltaT
+                    #t5=time.time_ns()
+                    #print("waste")
+            #t3=time.time_ns()
+                
+            #print("--")
+            #print((t3-t0)/1000000000)
+            #print((t5-t4)/1000000000)
+            #print((t2-t1)/1000000000)
+            
+            
+            step_counter+=1
+        else:
+            print(f"Entered the absorbing state after {step_counter} timesteps at t = {t}, the last timestep was {deltaT}")
+            break
+            #t = t_max
+        #print((1/1000000000)*(time.time_ns()-t0))
+                                 #THIS BLOCK VISUALIZES THE DCP AT VARIOUS STEPS
+        if step_counter%5000 == 0:
+            pass
+            #print(f"t={t} --- {N_active} nodes are active")
+            #visualize(G, active_nodes=active_nodes)
+        
+
+        
+    print(f"{N_active} nodes are active at t={t} after {step_counter} steps. The last timestep was {deltaT}")
+    if track_TOA:
+        return TOA_tracker
+    else:
+        return transition_times
+
+
+
 def sparsified_DCP_fast_until_percent_infected(G, track_TOA=False, quasistationary = True, t_max = 1, random_start = True, start_node = 0, original_graph_size = 100, percent_infected=0.5):
     patient_zero = 0
     healing_factor = G.getNodeAttribute("mu", float)
@@ -1848,7 +3069,7 @@ def sparsified_DCP_fast_until_percent_infected(G, track_TOA=False, quasistationa
         #print(G.degree(i))
 
     lambda_max = max([G.weight(u, v) for u,v in exposed_edges]) 
-    while N_active < G.numberOfNodes()*percent_infected:
+    while N_active < G.numberOfNodes()*percent_infected and t < t_max:
         #t0=time.time_ns()
         
         N_active = len(active_nodes)
@@ -3152,7 +4373,7 @@ def sparsified_asymptotic_quasistationary_activity_probability(G, G_structure="c
     return data
 
 
-def fast_sparsified_asymptotic_quasistationary_activity_probability(G, t_relax = 30, G_structure="chain", original_graph_size=100, dimensions = [1, 1], viz=True):
+def fast_sparsified_asymptotic_quasistationary_activity_probability(G, t_relax = 30, G_structure="chain", original_graph_size=100, dimensions = [1, 1], viz=True, title=""):
     relaxation_time = t_relax
     sparsified_DCP_fast(G, t_max=relaxation_time, original_graph_size=original_graph_size)
     #data is a dictionary with keys = sites and values = list of transition times
@@ -3177,6 +4398,7 @@ def fast_sparsified_asymptotic_quasistationary_activity_probability(G, t_relax =
         #print(proportions_of_time_active)
         #print(proportions_of_time_active)
         if G_structure == "chain":
+            plt.figure()
             plt.bar(range(original_graph_size), proportions_of_time_active, width=1, linewidth=0)
         if G_structure == "lattice":
             # same code as vis_lat
@@ -3194,6 +4416,8 @@ def fast_sparsified_asymptotic_quasistationary_activity_probability(G, t_relax =
             y = np.arange(h)
             X, Y = np.meshgrid(x, y)
             
+            plt.figure()
+            
             fig, ax = plt.subplots()
             ax.pcolormesh(x, y, Z, cmap='viridis')
             fig.tight_layout()
@@ -3208,10 +4432,220 @@ def fast_sparsified_asymptotic_quasistationary_activity_probability(G, t_relax =
             # telling which mappable we're talking about and
             # which Axes object it should be near
             fig.colorbar(pos, ax=ax)    
-            fig.title(f"{100*(1-(G.numberOfNodes()/original_graph_size))}% sparsified", fontsize=12)
+            fig.suptitle(title, fontsize=12)
             plt.show()
 
     return data
+
+
+def fast_quasistationary_activity_probability_checkpoints(G, t_relax = 30, G_structure="chain", original_graph_size=100, dimensions = [1, 1], viz=True, title=""):
+    relaxation_time = t_relax
+    sparsified_DCP_fast(G, t_max=relaxation_time, original_graph_size=original_graph_size)
+    #data is a dictionary with keys = sites and values = list of transition times
+    data0 = sparsified_DCP_fast(G, t_max=relaxation_time/2, original_graph_size=original_graph_size)
+    data1 = sparsified_DCP_fast(G, t_max=relaxation_time/2, original_graph_size=original_graph_size)
+    
+    if viz:
+        #matrix = np.matrix(data.to_numpy())
+        data = data0
+        #print(matrix.shape)
+        total_time_active_list = np.empty(original_graph_size)
+        for site in data:
+            trans_times = data[site]
+            total_time_active = 0
+            for i in range(1, len(trans_times), 2):
+                total_time_active += trans_times[i] - trans_times[i-1]
+            total_time_active_list[site] = total_time_active
+        
+        proportions_of_time_active = total_time_active_list/relaxation_time
+        #print(proportions_of_time_active_listform)
+        #proportions_of_time_active = [u[0,0] for u in proportions_of_time_active_listform]
+        #print(proportions_of_time_active)
+        #print(proportions_of_time_active)
+        if G_structure == "chain":
+            plt.figure()
+            plt.bar(range(original_graph_size), proportions_of_time_active, width=1, linewidth=0)
+        if G_structure == "lattice":
+            # same code as vis_lat
+            h = dimensions[0]
+            w = dimensions[1]
+            
+            Z = np.zeros((h,w))
+            
+            #first build a bunch of lines/rows
+            for y in range(h):
+                for x in range(w):  
+                    Z[x,y] = proportions_of_time_active[x+(y*w)]
+            
+            x = np.arange(w)
+            y = np.arange(h)
+            X, Y = np.meshgrid(x, y)
+            
+            plt.figure()
+            
+            fig, ax = plt.subplots()
+            ax.pcolormesh(x, y, Z, cmap='viridis')
+            fig.tight_layout()
+    
+            #fig, (ax1, ax2, ax3) = plt.subplots(figsize=(13, 3), ncols=3)
+            
+            # plot just the positive data and save the
+            # color "mappable" object returned by ax1.imshow
+            pos = ax.imshow(Z, cmap='viridis', interpolation='none')
+            
+            # add the colorbar using the figure's method,
+            # telling which mappable we're talking about and
+            # which Axes object it should be near
+            fig.colorbar(pos, ax=ax)    
+            fig.suptitle(title, fontsize=12)
+            plt.show()
+            
+        data = data1
+        total_time_active_list = np.empty(original_graph_size)
+        for site in data:
+            trans_times = data[site]
+            total_time_active = 0
+            for i in range(1, len(trans_times), 2):
+                total_time_active += trans_times[i] - trans_times[i-1]
+            total_time_active_list[site] = total_time_active
+        
+        proportions_of_time_active = total_time_active_list/relaxation_time
+        #print(proportions_of_time_active_listform)
+        #proportions_of_time_active = [u[0,0] for u in proportions_of_time_active_listform]
+        #print(proportions_of_time_active)
+        #print(proportions_of_time_active)
+        if G_structure == "chain":
+            plt.figure()
+            plt.bar(range(original_graph_size), proportions_of_time_active, width=1, linewidth=0)
+        if G_structure == "lattice":
+            # same code as vis_lat
+            h = dimensions[0]
+            w = dimensions[1]
+            
+            Z = np.zeros((h,w))
+            
+            #first build a bunch of lines/rows
+            for y in range(h):
+                for x in range(w):  
+                    Z[x,y] = proportions_of_time_active[x+(y*w)]
+            
+            x = np.arange(w)
+            y = np.arange(h)
+            X, Y = np.meshgrid(x, y)
+            
+            plt.figure()
+            
+            fig, ax = plt.subplots()
+            ax.pcolormesh(x, y, Z, cmap='viridis')
+            fig.tight_layout()
+    
+            #fig, (ax1, ax2, ax3) = plt.subplots(figsize=(13, 3), ncols=3)
+            
+            # plot just the positive data and save the
+            # color "mappable" object returned by ax1.imshow
+            pos = ax.imshow(Z, cmap='viridis', interpolation='none')
+            
+            # add the colorbar using the figure's method,
+            # telling which mappable we're talking about and
+            # which Axes object it should be near
+            fig.colorbar(pos, ax=ax)    
+            fig.suptitle(title, fontsize=12)
+            plt.show()
+
+    return data0, data1
+
+sparsified_DCP_fast_memsafe
+
+def fast_dcp_until_quasistationary(G, init_time = 2**6, t_max=10000000, G_structure="chain", original_graph_size=100, dimensions = [1, 1], viz=True, title=""):
+    #init time should be a power of 2
+    # it doesn't actually have to be but it should be just b/c that makes nice and intuitive doubling numbers
+    # t_max should be really really big; on order of 10 million for a cycle of length L=32
+    print("starting")
+    reset_to_distributed_infection(G, 1)
+    #d_init = sparsified_DCP_fast(G, t_max=1, original_graph_size=original_graph_size)
+    #vis_lat_advanced(d_init, original_graph_size, 1, G_structure, dimensions, f"initial state for " + title)
+    #run relaxation at the start 
+    sparsified_DCP_fast(G, t_max=init_time, original_graph_size=original_graph_size)
+    #data0 = sparsified_DCP_fast(G, t_max=init_time, original_graph_size=original_graph_size)
+    t0=time.time_ns()
+    in_quasistationary = False
+    t_i = init_time
+    data_first_half = sparsified_DCP_fast(G, t_max=t_i, original_graph_size=original_graph_size)
+    while not in_quasistationary:
+        #data0 = sparsified_DCP_fast(G, t_max=t_i, original_graph_size=original_graph_size)
+        data_second_half = sparsified_DCP_fast(G, t_max=t_i, original_graph_size=original_graph_size)
+        
+        spearman_compare_pval, lin_reg_r_squared, spearman_rho = spearman_compare(data_first_half, data_second_half, original_graph_size, t_i)
+        
+        if spearman_compare_pval < 0.05 and spearman_rho > 0.75:# and lin_reg_r_squared > 0.9:
+            print("found quasistationary state")
+            vis_lat_advanced(data_first_half, original_graph_size, t_i, G_structure, dimensions, title)
+            vis_lat_advanced(data_second_half, original_graph_size, t_i, G_structure, dimensions, title)
+            
+            in_quasistationary = True
+            return data_second_half
+        else:
+            t = time.time_ns()
+            print(f"Quasistationary state not yet reached with p = {spearman_compare_pval}. Doubling to t_i = {2*t_i}")
+            vis_lat_advanced(data_first_half, original_graph_size, t_i, G_structure, dimensions, title + f", t_i={t_i}, 1st half")
+            vis_lat_advanced(data_second_half, original_graph_size, t_i, G_structure, dimensions, title + f", t_i={t_i}, 2nd half")
+            time_so_far = (t-t0)/1000000000 # in secconds
+            next_t_hrs = time_so_far // 3600
+            next_t_mins = (time_so_far-(next_t_hrs*3600)) // 60
+            next_t_secs = (time_so_far - (next_t_hrs*3600) - (next_t_mins*60)) 
+            
+            print(f"Simulation has taken taken {time_so_far} seconds; next will end in roughly {next_t_hrs}hrs : {next_t_mins}m : {next_t_secs}s")
+            data_first_half = collate_fast_dcp_data(data_first_half, data_second_half, t_i)
+            print("data collated")
+            print(f"time is {time.localtime().tm_hour} : {time.localtime().tm_min} : {time.localtime().tm_sec} --- next step finishes at {time.localtime().tm_hour + next_t_hrs} : {time.localtime().tm_min + next_t_mins} : {time.localtime().tm_sec + next_t_secs}")
+            t_i *= 2
+        print(" ------- ")
+
+
+def fast_dcp_until_quasistationary_memsafe(G, init_time = 2**6, t_max=10000000, G_structure="chain", original_graph_size=100, dimensions = [1, 1], viz=True, title=""):
+    #init time should be a power of 2
+    # it doesn't actually have to be but it should be just b/c that makes nice and intuitive doubling numbers
+    # t_max should be really really big; on order of 10 million for a cycle of length L=32
+    print("starting")
+    reset_to_distributed_infection(G, 1)
+    #d_init = sparsified_DCP_fast(G, t_max=1, original_graph_size=original_graph_size)
+    #vis_lat_advanced(d_init, original_graph_size, 1, G_structure, dimensions, f"initial state for " + title)
+    #run relaxation at the start 
+    sparsified_DCP_fast_memsafe(G, t_max=init_time, original_graph_size=original_graph_size)
+    #data0 = sparsified_DCP_fast(G, t_max=init_time, original_graph_size=original_graph_size)
+    t0=time.time_ns()
+    in_quasistationary = False
+    t_i = init_time
+    data_first_half = sparsified_DCP_fast_memsafe(G, t_max=t_i, original_graph_size=original_graph_size)
+    while not in_quasistationary:
+        #data0 = sparsified_DCP_fast(G, t_max=t_i, original_graph_size=original_graph_size)
+        data_second_half = sparsified_DCP_fast_memsafe(G, t_max=t_i, original_graph_size=original_graph_size)
+        
+        spearman_compare_pval, lin_reg_r_squared, spearman_rho = spearman_compare(data_first_half, data_second_half, original_graph_size, t_i)
+        
+        if spearman_compare_pval < 0.05 and spearman_rho > 0.75:# and lin_reg_r_squared > 0.9:
+            print("found quasistationary state")
+            vis_lat_advanced(data_first_half, original_graph_size, t_i, G_structure, dimensions, title)
+            vis_lat_advanced(data_second_half, original_graph_size, t_i, G_structure, dimensions, title)
+            
+            in_quasistationary = True
+            return data_second_half
+        else:
+            t = time.time_ns()
+            print(f"Quasistationary state not yet reached with p = {spearman_compare_pval}. Doubling to t_i = {2*t_i}")
+            vis_lat_advanced(data_first_half, original_graph_size, t_i, G_structure, dimensions, title + f", t_i={t_i}, 1st half")
+            vis_lat_advanced(data_second_half, original_graph_size, t_i, G_structure, dimensions, title + f", t_i={t_i}, 2nd half")
+            time_so_far = (t-t0)/1000000000 # in secconds
+            next_t_hrs = time_so_far // 3600
+            next_t_mins = (time_so_far-(next_t_hrs*3600)) // 60
+            next_t_secs = (time_so_far - (next_t_hrs*3600) - (next_t_mins*60)) 
+            
+            print(f"Simulation has taken taken {time_so_far} seconds; next will end in roughly {next_t_hrs}hrs : {next_t_mins}m : {next_t_secs}s")
+            data_first_half = collate_fast_dcp_memsafe_data(data_first_half, data_second_half)
+            print("data collated")
+            print(f"time is {time.localtime().tm_hour} : {time.localtime().tm_min} : {time.localtime().tm_sec} --- next step finishes at {time.localtime().tm_hour + next_t_hrs} : {time.localtime().tm_min + next_t_mins} : {time.localtime().tm_sec + next_t_secs}")
+            t_i *= 2
+        print(" ------- ")
 
 
 
@@ -3268,23 +4702,39 @@ def xi_half_chi(G, chi, sim_time, num_simulations=10):
         ξ^B_{1/2} = 1, the more faithful the information provided by the metric 
         backbone is about the dynamics in the entire network."
     """
+    G_sdrg = copy_graph(G)
+    G_effr = copy_graph(G)
+    B = copy_graph(G)
     
-    B, n = SMDS_sparsifier(G, chi, output_num_components = True)
+    B, n = SMDS_sparsifier(B, chi, output_num_components = True)
     
-    G_tilde = copy_graph(G)
-    until_n_components(G_tilde, n)
+    G_sdrg = sdrg_sparsify(G_sdrg)
+    #until_n_components(G_tilde, n)
     
-    t_half_B = t_half(B, sim_time, num_simulations=num_simulations, original_graph_size=G.numberOfNodes())
+    print(f"metric backbone has: {B.numberOfEdges()} edges")
+    print(f"sdrg has: {G_sdrg.numberOfEdges()} edges")
+
+    G_effr = effective_resistance_sampling_sparsification(G_effr, B.numberOfEdges())
+    
+    
+    print("starting t_half measurements")
+    print("std - ")
     t_half_G = t_half(G, sim_time, num_simulations=num_simulations, original_graph_size=G.numberOfNodes())
-    t_half_G_tilde = t_half(G_tilde, sim_time, num_simulations=num_simulations, original_graph_size=G.numberOfNodes())
-    
+    print("sdrg - ")
+    t_half_G_sdrg = t_half(G_sdrg, sim_time, num_simulations=num_simulations, original_graph_size=G.numberOfNodes())
+    print("smds - ")
+    t_half_B = t_half(B, sim_time, num_simulations=num_simulations, original_graph_size=G.numberOfNodes())
+    print("effr - ")
+    t_half_G_effr = t_half(G_effr, sim_time, num_simulations=num_simulations, original_graph_size=G.numberOfNodes())
+
     #print(f"t_1/2 SDRG / t_1/2 is {t_half_G_tilde/t_half_G}")
     #print(f"t_1/2 semi-metric / t_1/2 is {t_half_B/t_half_G}")
     print("-- vals --")
     print(f"std: {t_half_G}")
     print(f"smds: {t_half_B}")
-    print(f"sdrg: {t_half_G_tilde}")
-    return (t_half_G, t_half_B, t_half_G_tilde)
+    print(f"sdrg: {t_half_G_sdrg}")
+    print(f"effr {t_half_G_effr}")
+    return (t_half_G, t_half_B, t_half_G_sdrg, t_half_G_effr)
  
 def generate_xi_half_curve(G, sim_time, num_simulations):
     
@@ -3292,6 +4742,7 @@ def generate_xi_half_curve(G, sim_time, num_simulations):
     
     sdrg_xi_vals = []
     smds_xi_vals = []  
+    effr_xi_vals = []  
     
     x = []
     
@@ -3300,14 +4751,17 @@ def generate_xi_half_curve(G, sim_time, num_simulations):
         print(vals)
         sdrg_xi_vals.append(vals[2]/vals[0])
         smds_xi_vals.append(vals[1]/vals[0])
+        effr_xi_vals.append(vals[3]/vals[0])
         x.append(chi)
         
     print(sdrg_xi_vals)
     print(smds_xi_vals)
+    print(effr_xi_vals)
     
     plt.plot(x, sdrg_xi_vals)
     plt.plot(x, smds_xi_vals)
-    plt.title("xi^x_{1/2} values for x = SDRG and x = SMDS")
+    plt.plot(x, effr_xi_vals)
+    plt.title("xi^x_{1/2} values for SDRG, SMDS, effR")
     plt.xlabel('chi value')
     plt.ylabel('xi^x_{1/2}')
     plt.show()
@@ -3328,9 +4782,8 @@ def compare_data(orig_data, mod_data, original_graph_size, relaxation_time):
             total_time_active += trans_times[i] - trans_times[i-1]
         total_time_active_list[site] = total_time_active
     
-    proportions_of_time_active = total_time_active_list/relaxation_time
-    prop_orig = proportions_of_time_active
-    
+    proportions_of_time_active_o = total_time_active_list/relaxation_time
+    prop_orig = [(proportions_of_time_active_o[i], i) for i in range(len(proportions_of_time_active_o)) ]
     
     prop_mod = []
     data = mod_data
@@ -3342,11 +4795,367 @@ def compare_data(orig_data, mod_data, original_graph_size, relaxation_time):
             total_time_active += trans_times[i] - trans_times[i-1]
         total_time_active_list[site] = total_time_active
     
-    proportions_of_time_active = total_time_active_list/relaxation_time
-    prop_mod = proportions_of_time_active
+    proportions_of_time_active_m = total_time_active_list/relaxation_time
+    prop_mod = [(proportions_of_time_active_m[i], i) for i in range(len(proportions_of_time_active_m)) ]
+    a = []
+    average_activity_comparison = np.average(abs(proportions_of_time_active_o - proportions_of_time_active_m))
+    prop_orig = sorted(prop_orig)
+    sorted_prop_time_active_o = sorted(proportions_of_time_active_o)
+    sorted_indices = [prop_orig[i][1] for i in range(len(prop_orig))]
+    prop_mod_sorted = []
+    for index in sorted_indices:
+        prop_mod_sorted.append(prop_mod[index][0])
+        a.append((prop_mod[index][0], prop_mod[index][1]))
+    #prop_mod = sorted(prop_mod, key=lambda x: x[1])
     
-    comp = abs(prop_orig - np.ones(len(prop_orig))*0.5)
-    return np.average(comp)
+    spearman_correlation = scipy.stats.spearmanr(sorted_prop_time_active_o, prop_mod_sorted)
+    
+    wasserstein_dist = scipy.stats.wasserstein_distance(sorted_prop_time_active_o, prop_mod_sorted)
+    linr = scipy.stats.linregress(sorted_prop_time_active_o, prop_mod_sorted)
+    print(f"{linr.slope}, {linr.intercept}, {linr.pvalue}, {linr.stderr}, {linr.intercept_stderr}")
+    #print(prop_orig[0:25])
+    #print(a[0:25])
+    #x = np.random.rand(len(prop_mod))
+    #y = np.random.rand(len(prop_mod))
+    plt.figure()
+    plt.scatter(sorted_prop_time_active_o, prop_mod_sorted)
+    x=np.linspace(0,1)#max(max(sorted_prop_time_active_o), max(prop_mod_sorted)))
+    plt.plot(x, linr.intercept + linr.slope*x, 'r', label='fitted line')
+    print(f"linear regression R^2: {linr.rvalue}")
+    print(f"absolute node-by-node activity difference, averaged: {average_activity_comparison}")
+    print(f"spearman rho: {spearman_correlation.statistic}")
+    print(f"spearman p-value: {spearman_correlation.pvalue}")
+    print(f"wasserstein distance: {wasserstein_dist}")
+
+
+def spearman_compare(orig_data, mod_data, original_graph_size, relaxation_time):
+    #get prop_time_active_orig
+    #data_arr = [orig_data, mod_data]
+    #prop_times_active = np.empty(2)
+    
+    prop_orig = []
+    data = orig_data
+    total_time_active_list = np.empty(original_graph_size)
+    for site in data:
+        trans_times = data[site]
+        total_time_active = 0
+        for i in range(1, len(trans_times), 2):
+            total_time_active += trans_times[i] - trans_times[i-1]
+        total_time_active_list[site] = total_time_active
+    
+    proportions_of_time_active_o = total_time_active_list/relaxation_time
+    prop_orig = [(proportions_of_time_active_o[i], i) for i in range(len(proportions_of_time_active_o)) ]
+    
+    prop_mod = []
+    data = mod_data
+    total_time_active_list = np.empty(original_graph_size)
+    for site in data:
+        trans_times = data[site]
+        total_time_active = 0
+        for i in range(1, len(trans_times), 2):
+            total_time_active += trans_times[i] - trans_times[i-1]
+        total_time_active_list[site] = total_time_active
+    
+    proportions_of_time_active_m = total_time_active_list/relaxation_time
+    prop_mod = [(proportions_of_time_active_m[i], i) for i in range(len(proportions_of_time_active_m)) ]
+    a = []
+    average_activity_comparison = np.average(abs(proportions_of_time_active_o - proportions_of_time_active_m))
+    prop_orig = sorted(prop_orig)
+    sorted_prop_time_active_o = sorted(proportions_of_time_active_o)
+    sorted_indices = [prop_orig[i][1] for i in range(len(prop_orig))]
+    prop_mod_sorted = []
+    for index in sorted_indices:
+        prop_mod_sorted.append(prop_mod[index][0])
+        a.append((prop_mod[index][0], prop_mod[index][1]))
+    #prop_mod = sorted(prop_mod, key=lambda x: x[1])
+    
+    spearman_correlation = scipy.stats.spearmanr(sorted_prop_time_active_o, prop_mod_sorted)
+    
+    wasserstein_dist = scipy.stats.wasserstein_distance(sorted_prop_time_active_o, prop_mod_sorted)
+    linr = scipy.stats.linregress(sorted_prop_time_active_o, prop_mod_sorted)
+    print(f"{linr.slope}, {linr.intercept}, {linr.pvalue}, {linr.stderr}, {linr.intercept_stderr}")
+    #print(prop_orig[0:25])
+    #print(a[0:25])
+    #x = np.random.rand(len(prop_mod))
+    #y = np.random.rand(len(prop_mod))
+    plt.figure()
+    plt.scatter(sorted_prop_time_active_o, prop_mod_sorted)
+    x=np.linspace(0,1)#max(max(sorted_prop_time_active_o), max(prop_mod_sorted)))
+    plt.plot(x, linr.intercept + linr.slope*x, 'r', label='fitted line')
+    print(f"linear regression R^2: {linr.rvalue**2}")
+    print(f"absolute node-by-node activity difference, averaged: {average_activity_comparison}")
+    print(f"spearman rho: {spearman_correlation.statistic}")
+    print(f"spearman p-value: {spearman_correlation.pvalue}")
+    print(f"wasserstein distance: {wasserstein_dist}")
+    
+    return spearman_correlation.pvalue, linr.rvalue**2, spearman_correlation.statistic
+
+
+
+def quasistationary_compare0():
+    G = generate_square_lattice(128, 128)
+    
+    G_sdrg = copy_graph(G)
+    G_smds = copy_graph(G)
+    G_effr = copy_graph(G)
+
+    
+    #G_smds = SMDS_sparsifier(G_smds, 0)
+    #num_edges = G_smds.numberOfEdges()
+    #G_sdrg = sdrg_sparsify_n_edges(G_sdrg, num_edges)
+    #G_effr = effective_resistance_sampling_sparsification(G_effr, num_edges)
+    
+    
+    reset_to_distributed_infection(G, 1)
+    #reset_to_distributed_infection(G_sdrg, 1)
+    #reset_to_distributed_infection(G_smds, 1)
+    #reset_to_distributed_infection(G_effr, 1)
+    
+    print("starting")
+    data_dense0 = fast_sparsified_asymptotic_quasistationary_activity_probability(G, t_relax = 5000, G_structure="lattice", original_graph_size=G.numberOfNodes(), dimensions=[128, 128], title="original graph")
+    print("done getting dense")
+    with open("dense2_0.pkl", "wb") as file:
+        pickle.dump(data_dense0, file)
+    print("saved dense2_0")
+    
+    reset_to_distributed_infection(G, 1)
+    data_dense1 = fast_sparsified_asymptotic_quasistationary_activity_probability(G, t_relax = 5000, G_structure="lattice", original_graph_size=G.numberOfNodes(), dimensions=[128, 128], title="original graph")
+    print("done getting dense")
+    with open("dense2_1.pkl", "wb") as file:
+        pickle.dump(data_dense1, file)
+    print("saved dense2_1")
+    """
+    data_sdrg = fast_sparsified_asymptotic_quasistationary_activity_probability(G_sdrg, t_relax = 5000, G_structure="lattice", original_graph_size=G.numberOfNodes(), dimensions=[128, 128], title = "sdrg sparsified")
+    with open("sdrg0.pkl", "wb") as file:
+        pickle.dump(data_sdrg, file)
+
+    data_smds = fast_sparsified_asymptotic_quasistationary_activity_probability(G_smds, t_relax = 5000, G_structure="lattice", original_graph_size=G.numberOfNodes(), dimensions=[128, 128], title = "smds sparsified")
+    with open("smds0.pkl", "wb") as file:
+        pickle.dump(data_smds, file)
+    
+    data_effr = fast_sparsified_asymptotic_quasistationary_activity_probability(G_effr, t_relax = 5000, G_structure="lattice", original_graph_size=G.numberOfNodes(), dimensions=[128, 128], title = "effR sparsified")
+    with open("effr0.pkl", "wb") as file:
+        pickle.dump(data_effr, file)
+    """
+    print(" ---------------------- data obtained ---------------------- ")
+    compare_data(data_dense0, data_dense1, G.numberOfNodes(), 5000)
+    """
+    print("sdrg compare")
+    compare_data(data_dense, data_sdrg, G.numberOfNodes(), 5000)
+    print("smds compare")
+    compare_data(data_dense, data_smds, G.numberOfNodes(), 5000)
+    print("effr compare")
+    compare_data(data_dense, data_effr, G.numberOfNodes(), 5000)
+    """
+
+
+def quasistationary_compare1():
+    G = generate_square_lattice(32, 1)
+    #G = generate_chain(32)
+    #G_sdrg = copy_graph(G)
+    #G_smds = copy_graph(G)
+    #G_effr = copy_graph(G)
+
+    
+    #G_smds = SMDS_sparsifier(G_smds, 0)
+    #num_edges = G_smds.numberOfEdges()
+    #G_sdrg = sdrg_sparsify_n_edges(G_sdrg, num_edges)
+    #G_effr = effective_resistance_sampling_sparsification(G_effr, num_edges)
+    
+    
+    reset_to_distributed_infection(G, 1)
+    #reset_to_distributed_infection(G_sdrg, 1)
+    #reset_to_distributed_infection(G_smds, 1)
+    #reset_to_distributed_infection(G_effr, 1)
+    t_relax_set = 2000000
+    print("starting")
+    data_dense0 = fast_sparsified_asymptotic_quasistationary_activity_probability(G, t_relax = t_relax_set, G_structure="chain", original_graph_size=G.numberOfNodes(), dimensions=[32, 32], title="original graph")
+    print("done getting dense")
+    with open("dense_qc1run4_0.pkl", "wb") as file:
+        pickle.dump(data_dense0, file)
+    print("saved dense2_0")
+    
+    
+    
+    reset_to_distributed_infection(G, 1)
+    
+    data_dense1 = fast_sparsified_asymptotic_quasistationary_activity_probability(G, t_relax = t_relax_set, G_structure="chain", original_graph_size=G.numberOfNodes(), dimensions=[32, 32], title="original graph")
+    print("done getting dense")
+    with open("dense_qc1run4_1.pkl", "wb") as file:
+        pickle.dump(data_dense1, file)
+    print("saved dense2_1")
+    
+    """
+    data_sdrg = fast_sparsified_asymptotic_quasistationary_activity_probability(G_sdrg, t_relax = 5000, G_structure="lattice", original_graph_size=G.numberOfNodes(), dimensions=[128, 128], title = "sdrg sparsified")
+    with open("sdrg0.pkl", "wb") as file:
+        pickle.dump(data_sdrg, file)
+
+    data_smds = fast_sparsified_asymptotic_quasistationary_activity_probability(G_smds, t_relax = 5000, G_structure="lattice", original_graph_size=G.numberOfNodes(), dimensions=[128, 128], title = "smds sparsified")
+    with open("smds0.pkl", "wb") as file:
+        pickle.dump(data_smds, file)
+    
+    data_effr = fast_sparsified_asymptotic_quasistationary_activity_probability(G_effr, t_relax = 5000, G_structure="lattice", original_graph_size=G.numberOfNodes(), dimensions=[128, 128], title = "effR sparsified")
+    with open("effr0.pkl", "wb") as file:
+        pickle.dump(data_effr, file)
+    """
+    print(" ---------------------- data obtained ---------------------- ")
+    compare_data(data_dense0, data_dense1, G.numberOfNodes(), t_relax_set)
+    
+    """
+    print("sdrg compare")
+    compare_data(data_dense, data_sdrg, G.numberOfNodes(), 5000)
+    print("smds compare")
+    compare_data(data_dense, data_smds, G.numberOfNodes(), 5000)
+    print("effr compare")
+    compare_data(data_dense, data_effr, G.numberOfNodes(), 5000)
+    """
+
+
+def quasistationary_compare2():
+    L = 8
+    t_relax_set = 1000000
+    
+    G = generate_square_lattice(L, L)
+    #G = generate_chain(32)
+    G_sdrg = copy_graph(G)
+    G_smds = copy_graph(G)
+    G_effr = copy_graph(G)
+
+    
+    G_smds = SMDS_sparsifier(G_smds, 0)
+    num_edges = G_smds.numberOfEdges()
+    G_sdrg = sdrg_sparsify(G_sdrg)
+    
+    G_effr = effective_resistance_sampling_sparsification(G_effr, num_edges)
+    
+    print("EDGE COUNT ------------- ")
+    print(f"base: {G.numberOfEdges()}")
+    print(f"sdrg: {G_sdrg.numberOfEdges()}")
+    print(f"smds: {G_smds.numberOfEdges()}")
+    print(f"effr: {G_effr.numberOfEdges()}")
+    
+    reset_to_distributed_infection(G, 1)
+    reset_to_distributed_infection(G_sdrg, 1)
+    reset_to_distributed_infection(G_smds, 1)
+    reset_to_distributed_infection(G_effr, 1)
+    
+    print("starting ----------------")
+    data_dense0 = fast_sparsified_asymptotic_quasistationary_activity_probability(G, t_relax = t_relax_set, G_structure="lattice", original_graph_size=G.numberOfNodes(), dimensions=[L, L], title="original graph 0")
+    print("done getting dense0 data")
+    with open("dense_qc2run0_0.pkl", "wb") as file:
+        pickle.dump(data_dense0, file)
+    print("saved dense0")
+    
+    reset_to_distributed_infection(G, 1)
+    
+    data_dense1 = fast_sparsified_asymptotic_quasistationary_activity_probability(G, t_relax = t_relax_set, G_structure="lattice", original_graph_size=G.numberOfNodes(), dimensions=[L, L], title="original graph 1")
+    print("done getting dense1 data")
+    with open("dense_qc2run0_1.pkl", "wb") as file:
+        pickle.dump(data_dense1, file)
+    print("saved dense1")
+    
+    
+    data_sdrg = fast_sparsified_asymptotic_quasistationary_activity_probability(G_sdrg, t_relax = t_relax_set, G_structure="lattice", original_graph_size=G.numberOfNodes(), dimensions=[L, L], title = "sdrg sparsified")
+    with open("sdrg_qc2_run0.pkl", "wb") as file:
+        pickle.dump(data_sdrg, file)
+
+    data_smds = fast_sparsified_asymptotic_quasistationary_activity_probability(G_smds, t_relax = t_relax_set, G_structure="lattice", original_graph_size=G.numberOfNodes(), dimensions=[L, L], title = "smds sparsified")
+    with open("smds_qc2_run0.pkl", "wb") as file:
+        pickle.dump(data_smds, file)
+    
+    data_effr = fast_sparsified_asymptotic_quasistationary_activity_probability(G_effr, t_relax = t_relax_set, G_structure="lattice", original_graph_size=G.numberOfNodes(), dimensions=[L, L], title = "effR sparsified")
+    with open("effr_qc2_run0.pkl", "wb") as file:
+        pickle.dump(data_effr, file)
+    
+    print(" ---------------------- data obtained ---------------------- ")
+    print(" -------------- check quasistationary time -------------- ")
+    compare_data(data_dense0, data_dense1, G.numberOfNodes(), t_relax_set)
+
+    
+    print(" ----------------------     sdrg compare")
+    compare_data(data_dense0, data_sdrg, G.numberOfNodes(), t_relax_set)
+    print(" ----------------------     smds compare")
+    compare_data(data_dense0, data_smds, G.numberOfNodes(), t_relax_set)
+    print(" ----------------------     effr compare")
+    compare_data(data_dense0, data_effr, G.numberOfNodes(), t_relax_set)
+    
+
+
+def quasistationary_compare3():
+    L = 32
+    t_relax_set = 2500000
+    
+    G = generate_square_lattice(L, L)
+    #G = generate_chain(32)
+    G_sdrg = copy_graph(G)
+    G_smds = copy_graph(G)
+    G_effr = copy_graph(G)
+
+    
+    G_smds = SMDS_sparsifier(G_smds, 0)
+    num_edges = G_smds.numberOfEdges()
+    G_sdrg = sdrg_sparsify(G_sdrg)
+    
+    G_effr = effective_resistance_sampling_sparsification(G_effr, num_edges)
+    
+    print("EDGE COUNT ------------- ")
+    print(f"base: {G.numberOfEdges()}")
+    print(f"sdrg: {G_sdrg.numberOfEdges()}")
+    print(f"smds: {G_smds.numberOfEdges()}")
+    print(f"effr: {G_effr.numberOfEdges()}")
+    
+    reset_to_distributed_infection(G, 1)
+    reset_to_distributed_infection(G_sdrg, 1)
+    reset_to_distributed_infection(G_smds, 1)
+    reset_to_distributed_infection(G_effr, 1)
+    
+    print("starting ----------------")
+    data_dense0, data_dense1 = fast_quasistationary_activity_probability_checkpoints(G, t_relax = t_relax_set, G_structure="lattice", original_graph_size=G.numberOfNodes(), dimensions=[L, L], title="original graph 0")
+    print("done getting dense0 & 1 data")
+    with open("dense_qc3run0_0.pkl", "wb") as file:
+        pickle.dump(data_dense0, file)
+    print("saved dense0")
+    
+    
+    with open("dense_qc3run0_1.pkl", "wb") as file:
+        pickle.dump(data_dense1, file)
+    print("saved dense1")
+    
+    
+    data_sdrg = fast_sparsified_asymptotic_quasistationary_activity_probability(G_sdrg, t_relax = t_relax_set, G_structure="lattice", original_graph_size=G.numberOfNodes(), dimensions=[L, L], title = "sdrg sparsified")
+    with open("sdrg_qc2_run0.pkl", "wb") as file:
+        pickle.dump(data_sdrg, file)
+
+    data_smds = fast_sparsified_asymptotic_quasistationary_activity_probability(G_smds, t_relax = t_relax_set, G_structure="lattice", original_graph_size=G.numberOfNodes(), dimensions=[L, L], title = "smds sparsified")
+    with open("smds_qc2_run0.pkl", "wb") as file:
+        pickle.dump(data_smds, file)
+    
+    data_effr = fast_sparsified_asymptotic_quasistationary_activity_probability(G_effr, t_relax = t_relax_set, G_structure="lattice", original_graph_size=G.numberOfNodes(), dimensions=[L, L], title = "effR sparsified")
+    with open("effr_qc2_run0.pkl", "wb") as file:
+        pickle.dump(data_effr, file)
+    
+    print(" ---------------------- data obtained ---------------------- ")
+    print(" -------------- check quasistationary time -------------- ")
+    compare_data(data_dense0, data_dense1, G.numberOfNodes(), t_relax_set)
+
+    
+    print(" ----------------------     sdrg compare")
+    compare_data(data_dense0, data_sdrg, G.numberOfNodes(), t_relax_set)
+    print(" ----------------------     smds compare")
+    compare_data(data_dense0, data_smds, G.numberOfNodes(), t_relax_set)
+    print(" ----------------------     effr compare")
+    compare_data(data_dense0, data_effr, G.numberOfNodes(), t_relax_set)
+    
+
+
+def gen_plots():
+    with open("dense_qc2run0_0.pkl", "rb") as file:
+        loaded_data = pickle.load(file)
+    with open("dense_qc2run0_1.pkl", "rb") as file:
+        loaded_compare = pickle.load(file)
+
+    compare_data(loaded_data, loaded_compare, 8*8, 1000000)
+
 
 
 def Wasserstein_ATES(G, G_tilde, sim_time, start_condition='l', num_simulations=10, dispersion_density=0.01, p=False):
@@ -3742,7 +5551,17 @@ def generate_ATES_comparison_curve_range(G, sim_time, start_condition='l', num_s
     
     #store the arrival time estimation scores for both methosd in these lists
     sdrg_ATES = []
+    smds_ATES = []
     effR_ATES = []
+    
+    G_sdrg = copy_graph(G)
+    G_smds = copy_graph(G)
+    G_effr = copy_graph(G)
+    
+    G_sdrg = sdrg_sparsify(G_sdrg)
+    G_smds = SMDS_sparsifier(G_smds, 0)
+    
+    
     x = []
     """
         a = G_sdrg.numberOfNodes()
@@ -3759,10 +5578,10 @@ def generate_ATES_comparison_curve_range(G, sim_time, start_condition='l', num_s
             G_sdrg_size = a + G_sdrg.numberOfEdges()
     """
         
-    sparsification_proportions = np.linspace(sparsification_range[0], sparsification_range[1], k)
+    sparsification_proportions = np.linspace(0,1,k)#sparsification_range[0], sparsification_range[1], k)
     
-    print(initial_num_components*sparsification_proportions)
-    print((initial_num_components*sparsification_proportions)-4096)
+    #print(initial_num_components*sparsification_proportions)
+    #print((initial_num_components*sparsification_proportions)-4096)
     
     for proportion in sparsification_proportions:
         
@@ -3814,6 +5633,7 @@ def generate_ATES_comparison_curve_range(G, sim_time, start_condition='l', num_s
     
     plt.plot(x, sdrg_ATES)
     plt.plot(x, effR_ATES)
+    
     plt.title("Arrival Time Error Scores of SDRG v.s. effR Sparsification")
     plt.xlabel('sparsification percentage')
     plt.ylabel('Arrival Time Error Score')
@@ -4007,6 +5827,61 @@ def WDMeans(Org_Arrivals, Sps_Arrivals, simnum):
 
 
 """ ------------------------------------ UTILITIES ------------------------------------ """
+def run_viz_step(G, t):
+    pass
+
+
+def collate_fast_dcp_data(data0, data1, t):
+    #TODO This method will slowly "lose" time because the DCP sims always run a tiny bit longer than their t_max. This shouldn't be a big issue but maybe something to fix. 
+    d_out = data0
+    for site in range(len(d_out)):
+        #print(site)
+        for transition in data1[site][1:]:
+            d_out[site].append(transition + t)
+    return d_out
+   
+
+    
+def collate_fast_dcp_memsafe_data(data0, data1):
+    #TODO This method will slowly "lose" time because the DCP sims always run a tiny bit longer than their t_max. This shouldn't be a big issue but maybe something to fix. 
+    d_out = data0
+    for site in range(len(d_out)):
+        #print(site)
+        d_out[site][0] += data1[site][0]
+        d_out[site][1] += data1[site][1]
+        d_out[site][2] = d_out[site][0] + d_out[site][1] # this value shouldn't matter as it has no impact on the next simulation
+        d_out[site][3] = False #we indicate a final transition from active -> inactive @ t_max
+    return d_out
+   
+        
+
+def get_max_omega(G):
+    mu = G.getNodeAttribute("mu", float)
+    omega = 0
+    for u in G.iterNodes():
+        mu_val = mu[u]
+        if mu_val > omega:
+            omega = mu_val
+    for u,v in G.iterEdges():
+        w = G.weight(u,v)
+        if w > omega:
+            omega = w
+    return omega
+
+def get_list_of_edge_components(G, eid):
+    edge_components = G.getEdgeAttribute("e_comp", str)
+    l = edge_components[eid].split("_")
+    out = []
+    for edge in l:
+        tup = eval(edge)
+        out.append(tup)
+    return out
+
+def add_e_comp(G):
+    comp = G.attachEdgeAttribute("e_comp", str)
+    
+    for edge in G.iterEdges():
+        comp[edge] = f"{edge}"
 
 def get_site_location(site, G):
     components = G.getNodeAttribute("components", str)
@@ -4053,18 +5928,31 @@ def copy_graph(G_in):
     in_activity = G_in.getNodeAttribute("active", int)
     in_mu = G_in.getNodeAttribute("mu", float)
     in_comp = G_in.getNodeAttribute("components", str)
-    for edge in G_in.iterEdges():
-        G.addEdge(edge[0], edge[1], w=G_in.weight(edge[0], edge[1]))
+    in_edge_comps = G_in.getEdgeAttribute("e_comp", str)
+    in_mu_comps = G_in.getNodeAttribute("mu_comp", str)
+    in_lam_comps = G_in.getEdgeAttribute("lambda_comp", str)
+    
     
     is_active = G.attachNodeAttribute("active", int)
     healing_factor = G.attachNodeAttribute("mu", float)
     components = G.attachNodeAttribute("components", str)
-    #add disorder to healing values too if desired
+    edge_components = G.attachEdgeAttribute("e_comp", str)
+    mu_components = G.attachNodeAttribute("mu_comp", str)
+    lambda_components = G.attachEdgeAttribute("lambda_comp", str)
     
+            
+    #add disorder to healing values too if desired
+    for edge in G_in.iterEdges():
+        G.addEdge(edge[0], edge[1], w=G_in.weight(edge[0], edge[1]))
+        eid = G.edgeId(edge[0], edge[1])
+        edge_components[eid] = in_edge_comps[eid]
+        lambda_components[eid] = in_lam_comps[eid]
+
     for u in G.iterNodes():
         healing_factor[u] = in_mu[u]
         is_active[u] = in_activity[u]
         components[u] = in_comp[u]
+        mu_components[u] = in_mu_comps[u]
     
     return G
 
@@ -4143,6 +6031,66 @@ def vis_lat(data, dimensions):
     fig.colorbar(pos, ax=ax)    
     plt.show()
     
+def vis_lat_advanced(data, original_graph_size, relaxation_time, G_structure, dimensions, title):
+    #matrix = np.matrix(data.to_numpy())
+    
+    #print(matrix.shape)
+    total_time_active_list = np.empty(original_graph_size)
+    for site in data:
+        trans_times = data[site]
+        trans_times.append(relaxation_time)
+        total_time_active = 0
+        for i in range(1, len(trans_times), 2):
+            total_time_active += trans_times[i] - trans_times[i-1]
+        total_time_active_list[site] = total_time_active
+    
+    proportions_of_time_active = total_time_active_list/relaxation_time
+    #print(proportions_of_time_active_listform)
+    #proportions_of_time_active = [u[0,0] for u in proportions_of_time_active_listform]
+    #print(proportions_of_time_active)
+    #print(proportions_of_time_active)
+    if G_structure == "chain":
+        plt.figure()
+        fig, ax = plt.subplots()
+        plt.bar(range(original_graph_size), proportions_of_time_active, width=1, linewidth=0)
+        fig.suptitle(title, fontsize=12)
+        plt.show()
+    if G_structure == "lattice":
+        # same code as vis_lat
+        h = dimensions[0]
+        w = dimensions[1]
+        
+        Z = np.zeros((h,w))
+        
+        #first build a bunch of lines/rows
+        for y in range(h):
+            for x in range(w):  
+                Z[x,y] = proportions_of_time_active[x+(y*w)]
+        
+        x = np.arange(w)
+        y = np.arange(h)
+        X, Y = np.meshgrid(x, y)
+        
+        plt.figure()
+        
+        fig, ax = plt.subplots()
+        ax.pcolormesh(x, y, Z, cmap='viridis', vmin=0, vmax=1)
+                
+
+        #fig.tight_layout()
+
+        #fig, (ax1, ax2, ax3) = plt.subplots(figsize=(13, 3), ncols=3)
+        
+        # plot just the positive data and save the
+        # color "mappable" object returned by ax1.imshow
+        pos = ax.imshow(Z, cmap='viridis', interpolation='none')
+        
+        # add the colorbar using the figure's method,
+        # telling which mappable we're talking about and
+        # which Axes object it should be near
+        fig.colorbar(pos, ax=ax, spacing='uniform')
+        fig.suptitle(title, fontsize=12)
+        plt.show()
     
 def get_proportions(simulation_data):
     proportions_arr = []
@@ -4200,7 +6148,10 @@ def fast_random_choose(s, min_val, max_val):
         if u in s:
             return u
     return np.random.choice(list(s))
-        
+
+#def fast_random_choose_weighted(s, weights, min_val, max_val):
+
+
 def test():
     
     data = set(np.random.randint(0, high=10000, size=12000))

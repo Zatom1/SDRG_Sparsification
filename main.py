@@ -23,9 +23,10 @@ import bisect
 import pickle
 import matplotlib.colors as mcolors
 from numba import jit
+from math import log as ln
 
 np.random.seed(1)
-    #"C:\Users\zidda\Downloads\inputs_L10_pbcTrue_h0-1.0_j0-1.0_seed1.npz"
+#"C:\Users\zidda\Downloads\inputs_L10_pbcTrue_h0-1.0_j0-1.0_seed1.npz"
     
     
 """ ------------------------------------ GRAPH GENERATION ------------------------------------ """
@@ -72,7 +73,7 @@ def translate_Neil_NP_to_graph(filename='inputs_L50_pbcTrue_h0-1.0_j0-1.0_seed1.
         print(bonds)
         
         
-def generate_square_lattice(width, height, torus = True, visualize_on=False, disordered_mu = True, constant_mu = 1.0, disordered_lambda=True, constant_lambda = 0.8, chain=True, disorder_alpha = 1):
+def generate_square_lattice(width, height, torus = True, visualize_on=False, disordered_mu = True, constant_mu = 1.0, disordered_lambda=True, constant_lambda = 0.8, chain=True, disorder_alpha = 4, critical=True):
     #Self explanatory
     G = nk.graph.Graph(n=width*height, weighted = True, edgesIndexed=True)
     
@@ -125,15 +126,15 @@ def generate_square_lattice(width, height, torus = True, visualize_on=False, dis
         for u,v in G.iterEdges():
             G.setWeight(u,v,constant_lambda)"""
     
-    #init activity values (infected)
+    #init activity values (infected/healed)
     is_active = G.attachNodeAttribute("active", int)
     
     #init mu values
     healing_factor = G.attachNodeAttribute("mu", float)
     
     #node & edge components have the *like* components that have merged to form any given edge
-    components = G.attachNodeAttribute("components", str) 
-    edge_components = G.attachEdgeAttribute("e_comp", str)
+    components = G.attachNodeAttribute("components", str)  #like "12_53_25_65"
+    edge_components = G.attachEdgeAttribute("e_comp", str) #like "(12,53)_(25,65)"
     
     #mu & lambda components have *all* components that have contributed to the mu or lambda values of a node/edge, respectively
     # these are stored as n123_e(34,42)_n53_ ..., with contributing nodes denoted n, and contributing edges denoted e
@@ -141,29 +142,50 @@ def generate_square_lattice(width, height, torus = True, visualize_on=False, dis
     lambda_components = G.attachEdgeAttribute("lambda_comp", str)
     
     #add disorder to healing values too if desired
-    if disordered_mu:
+    if critical:
+        N = G.numberOfNodes()
+        #mu_values = generate_power_law_log_mean(N, disorder_alpha, 1.6784)
+        #print(mu_values)
+        #lambda_values = generate_power_law_log_mean(G.numberOfEdges(), 1, 1)
         for u in G.iterNodes():
             #mu = scipy.stats.powerlaw.rvs(disorder_alpha, size=1)
             #print(mu)
-            mu = np.random.random()
-            healing_factor[u] = mu#[0]
+            mu = np.random.random()*math.exp(1.6784)
+            healing_factor[u] = mu#mu_values[u]#[0]
             is_active[u] = 0
             components[u] = f"{u}"
             mu_components[u] = f"n{u}"
-    else:
-        for u in G.iterNodes():
-            healing_factor[u] = constant_mu
-            is_active[u] = 0
-            components[u] = f"{u}"
-            mu_components[u] = f"n{u}"
+        for edge in G.iterEdges():
+            lambda_val = np.random.random()
             
-    for edge in G.iterEdges():
-        lambda_val = scipy.stats.powerlaw.rvs(disorder_alpha, size=1)
-        
-        G.setWeight(edge[0], edge[1], lambda_val[0])
-        eid = G.edgeId(edge[0], edge[1])
-        edge_components[eid] = f"{edge}"
-        lambda_components[eid] = f"e({edge[0]},{edge[1]})"
+            G.setWeight(edge[0], edge[1], lambda_val)
+            eid = G.edgeId(edge[0], edge[1])
+            edge_components[eid] = f"{edge}"
+            lambda_components[eid] = f"e({edge[0]},{edge[1]})"
+    else:
+        if disordered_mu:
+            for u in G.iterNodes():
+                #mu = scipy.stats.powerlaw.rvs(disorder_alpha, size=1)
+                #print(mu)
+                mu = np.random.random()
+                healing_factor[u] = mu#[0]
+                is_active[u] = 0
+                components[u] = f"{u}"
+                mu_components[u] = f"n{u}"
+        else:
+            for u in G.iterNodes():
+                healing_factor[u] = constant_mu
+                is_active[u] = 0
+                components[u] = f"{u}"
+                mu_components[u] = f"n{u}"
+                
+        for edge in G.iterEdges():
+            lambda_val = scipy.stats.powerlaw.rvs(disorder_alpha, size=1)
+            
+            G.setWeight(edge[0], edge[1], lambda_val[0])
+            eid = G.edgeId(edge[0], edge[1])
+            edge_components[eid] = f"{edge}"
+            lambda_components[eid] = f"e({edge[0]},{edge[1]})"
     print("done!")
         
     return G
@@ -228,7 +250,14 @@ def generate_complete(n, visualize_on=False, disorder_alpha = 1):
         
     return G
 
+def generate_power_law_log_mean(N, alpha, target_value):
+    xmin = np.exp(target_value - 1/(alpha - 1))
+    
+    # Generate N samples
+    u = np.random.uniform(0, 1, N)
+    x = xmin * (1 - u) ** (-1/(alpha - 1))
 
+    return x
 
 def cut_torus_to_square(G_in):
     G = copy_graph(G_in)
@@ -298,11 +327,12 @@ def get_graph_theta(G):
     
     lnh_bar = sum([math.log(i) for i in h_list])/len(h_list)
     lnJ_bar = sum([math.log(i[2]) for i in J_list])/len(J_list)
+    
     #print(lnh_bar / lnJ_bar)
     #print(lnh_bar - lnJ_bar)
     
     return lnh_bar / lnJ_bar
-    return lnh_bar - lnJ_bar
+    #return lnh_bar - lnJ_bar
 
 def generate_chain(length, loop = True, visualize_on=False, disordered_mu = True, constant_mu = 1.0, disordered_lambda=True, constant_lambda = 0.8):
     G = nk.graph.Graph(n=length, weighted = True, edgesIndexed=True)
@@ -801,7 +831,7 @@ def test4(G_in):
 
 def SDRG_crit_point_estimation(G_in, num_iterations, delta_mu = 0.1):
     #final_mu_scale = 1.0
-    mu_scale_factor = 7.0
+    mu_scale_factor = 9.0
     G_in = scale_mu(G_in, mu_scale_factor)
     L = int(math.sqrt(G_in.numberOfNodes()))
     
@@ -888,11 +918,100 @@ def SDRG_crit_point_estimation(G_in, num_iterations, delta_mu = 0.1):
         print(f"interval has size: {abs(mu_scale_factor-other_side_of_last_crossing)}")
     return mu_scale_factor
             
+def max_susceptibility_crit_point_estimation(G_in, min_mu, max_mu, steps, averaging=True):
+    G = copy_graph(G_in)
+    N = G.numberOfNodes()
+    
+    screening_steps = round(steps*0.75)
+    honing_steps = round(steps*0.25)
+    screening_linspace = np.linspace(min_mu, max_mu, num=screening_steps)
+    
+    chi_arr = []
+    mu_arr = []
+    for i in screening_linspace:
+        G_sample = copy_graph(G)
+        G_sample = scale_mu(G_sample, i)
+        
+        chi_sample_arr = []
+        
+        samples_per_sample = 3 if averaging else 1
+        
+        for j in range(samples_per_sample):
+        
+            data, densities = fast_dcp_until_quasistationary_memsafe(G_sample, viz=False, original_graph_size=G.numberOfNodes(), spearman_thresh=0.98, return_density_set = True)
+            
+            print("----- got data and densities!")
+            
+            #densities_list = np.array(densities)
+            
+            ev_rho = densities[0] #np.average(densities_list)
+            
+            ev_rho_sq = densities[1] #np.average(np.square(densities_list))
+            
+            chi_sample = N*( (ev_rho_sq - (ev_rho**2)) / ev_rho )
+            chi_sample_arr.append(chi_sample)
+        chi = np.average(chi_sample_arr)
+        
+        print(f"chi = {chi} at mu = {i}")
+        chi_arr.append(chi)
+        mu_arr.append(i)
+        
+    lower_chi_max_bound = mu_arr[np.argmax(chi_arr)-1]
+    upper_chi_max_bound = mu_arr[np.argmax(chi_arr)+1]
+    
+    print("Completed screening; started honing process")
+    
+    honing_linspace = np.linspace(lower_chi_max_bound, upper_chi_max_bound, num=honing_steps)
+    
+    #chi_arr = []
+    #mu_arr = []
+    for i in honing_linspace:
+        G_sample = copy_graph(G)
+        G_sample = scale_mu(G_sample, i)
+        data, densities = fast_dcp_until_quasistationary_memsafe(G_sample, viz=False, original_graph_size=G.numberOfNodes(), spearman_thresh=0.98, return_density_set = True)
+        
+        print("----- got data and densities!")
+        
+        densities_list = np.array(densities)
+        
+        ev_rho = ev_rho = densities[0]
+        
+        ev_rho_sq = densities[1]
+        
+        chi = N*( (ev_rho_sq - (ev_rho**2)) / ev_rho )
+        
+        print(f"chi = {chi} at mu = {i}")
+        chi_arr.append(chi)
+        mu_arr.append(i)
+    
+    max_chi_ind = np.argmax(chi_arr)
+    best_mu = mu_arr[max_chi_ind]
+    
+    print(f"Completed honing process; max chi value found is chi={chi_arr[max_chi_ind]} at mu={best_mu}")
+    print(chi_arr)
+    print(mu_arr)
+    return best_mu
+
+def get_chi(G):
+    G_sample = copy_graph(G)
+    data, densities = fast_dcp_until_quasistationary_memsafe(G_sample, viz=False, original_graph_size=G.numberOfNodes(), spearman_thresh=0.98, return_density_set = True)
+    
+    print("----- got data and densities!")
+    
+    densities_list = np.array(densities)
+    
+    ev_rho = np.average(densities_list)
+    
+    ev_rho_sq = np.average(np.square(densities_list))
+    
+    chi = G.numberOfNodes()*( (ev_rho_sq - (ev_rho**2)) / ev_rho )
+    
+    print(f"chi = {chi}")
 
 ######### FUNDAMENTAL STEP
 
 
-def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, decimation_log = [], sparsify_mode = True, sparsify_log = [], partial=False, partial_list=[], keep_connected=False, visualizeStep = False, verbose=True):
+def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, decimation_log = [], sparsify_mode = False, sparsify_log = [], partial=False, partial_set=set(), keep_connected=False, keep_connected_set=set(), kawashima_filtering=True, local_maxima_filtering=False, step=0, visualizeStep = False, verbose=True):
     """This method does a single iteration of the SDRG sparsification. 
         - G: This is a networkit graph. It should be fully-connected/only contain one component, and needs to have edge weights + mu values (healing factor) + components (initialized with each node's own index)
         - neil_mode: Neil has a sparsification algorithm that outputs, at the end, all of the decimated clusters. This toggle just changes to output to this for checking the sdrg results against his
@@ -918,26 +1037,42 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
         last_site = [u for u in G.iterNodes()]
 
         decimated_sites = np.append(decimated_sites, components[last_site[0]])
-        if logging_toggle:
-            return G, decimation_log
-        elif sparsify_mode:
+        
+        if sparsify_mode and not partial:
             return G, sparsify_log
+        elif sparsify_mode and partial and keep_connected:
+            return G, sparsify_log, partial_set, keep_connected_set
+        elif sparsify_mode and partial:
+            return G, sparsify_log, partial_set, set()
+        elif logging_toggle and not partial:
+            return G, decimation_log
+        elif logging_toggle and partial:
+            return G, decimation_log, partial_set
+        
         elif neil_mode:
             return G, decimated_sites
+        
         return G
      
     #Put all mu and lambda values into a single np array so that we can easily choose the greatest value
     mu_arr = np.array([np.array([healing_factor[u], u]).T for u in G.iterNodes()])
+    
+    #IF ERROR HERE: lambda_arr will throw an error 
     lambda_arr = np.array([np.array([G.weight(u,v), u, v]).T for u,v in G.iterEdges()])
-            
-    max_mu_lambda_index = np.argmax(np.concat((mu_arr[:,0], lambda_arr[:,0])))
+    #print(lambda_arr)    
+    if len(lambda_arr) > 0:
+        max_mu_lambda_index = np.argmax(np.concat((mu_arr[:,0], lambda_arr[:,0])))
+    else:
+        max_mu_lambda_index = np.argmax(mu_arr[:,0])
     
     t1 = time.time_ns()
     
     #print((t1-t0)/1000000000)
     
+    
     if max_mu_lambda_index > n_nodes-1: #true iff biggest value is a lambda
         t0 = time.time_ns()
+        
         edge_to_decimate = lambda_arr[max_mu_lambda_index-n_nodes, 1:] #np list of length 2
         
         #union the two sets containing neighbors of u and v
@@ -947,10 +1082,15 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
         #give a name to each side of the edge
         u = edge_to_decimate[0]
         v = edge_to_decimate[1]
+        omega = G.weight(u,v)
+        
         #print(f"decimating edge {edge_to_decimate} with lambda = {G.weight(u,v)}") 
 
         #note that, as a result of this step, this sdrg algorithm creates new node indices up to 2x the original size of the graph. This is important for some methods like fast_random_choose()
         k = G.addNode() # returns new node id, so k = new node id
+        
+        #print(f"holy shit a bond decimation!!1!11!!! btwn {u} and {v} to form {k}")
+        
         #if logging_toggle:
             #decimation_log.append
             #decimation_log.append([len(decimation_log), edge_to_decimate, G.weight(u,v)])
@@ -963,7 +1103,8 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
         healing_factor[k] = h_k
         #keep track of our components
         components[k] = f"{components[u]}_{components[v]}"
-        mu_components[k] = f"{mu_components[u]}_{mu_components[u]}_{lambda_components[G.edgeId(u,v)]}"
+        #print(f"holy shit a bond decimation!!1!11!!! btwn {u} and {v} to form {k} with components: {components[k]}")
+        mu_components[k] = f"{mu_components[u]}_{mu_components[v]}_{lambda_components[G.edgeId(u,v)]}"
         is_active[k] = 0
         
         for neighbor in pair_neighborhood:
@@ -990,21 +1131,35 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
                 if logging_toggle:
                     if J_ui == new_edge_weight:
                         #print(get_list_of_edge_components(G, vneid))
-                        edge_comp_list = get_list_of_edge_components(G, vneid)
-                        for i in edge_comp_list:
-                            decimation_log.append(i)
-                    else:
                         edge_comp_list = get_list_of_edge_components(G, uneid)
                         for i in edge_comp_list:
                             decimation_log.append(i)
+                    else:
+                        edge_comp_list = get_list_of_edge_components(G, vneid)
+                        for i in edge_comp_list:
+                            decimation_log.append(i)
                         #decimation_log.append((u,neighbor))
-                if logging_toggle:
-                    edge_components[eid] = f"{edge_components[uneid]}_{edge_components[vneid]}"
+                #if logging_toggle:
+                edge_components[eid] = f"{edge_components[uneid]}_{edge_components[vneid]}"
+                    
+                if partial:
+                    #print("partial log adding a new edge ...")
+                    if J_ui == new_edge_weight:
+                        #print(get_list_of_edge_components(G, vneid))
+                        edge_comp_list = get_list_of_edge_components(G, vneid)
+                        for i in edge_comp_list:
+                            #add the edge, the energy scale/omega value when it was decimated, and the value of the edge itself
+                            partial_set.add((i, omega, J_vi))
+                    else:
+                        edge_comp_list = get_list_of_edge_components(G, uneid)
+                        for i in edge_comp_list:
+                            partial_set.add((i, omega, J_ui))
+                        #decimation_log.append((u,neighbor))
             else:
                 #G.addEdge(k, neighbor, new_edge_weight)
                 #eid = G.edgeId(k, neighbor)
-                if logging_toggle:
-                    edge_components[eid] = f"{edge_components[G.edgeId(u, neighbor)]}" if G.weight(u, neighbor) > 0 else f"{edge_components[G.edgeId(v, neighbor)]}"
+                #if logging_toggle:
+                edge_components[eid] = f"{edge_components[G.edgeId(u, neighbor)]}" if G.weight(u, neighbor) > 0 else f"{edge_components[G.edgeId(v, neighbor)]}"
             
         #remove nodes at end. We had to wait b/c otherwise we can't calculate weights in loop
         G.removeNode(u)
@@ -1014,9 +1169,13 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
         #print()
         
     else: #true iff biggest val is a mu
-        t0 = time.time_ns()
+        step_to_print_after = 125    
+        if step > step_to_print_after:
+            print("---")
+            t0 = time.time_ns()
         #since we put the mu_arr in front of the lambda_arr, we can directly access the mu_arr list with our max_mu_lambda_index without getting indexing errors
         site_to_decimate = mu_arr[max_mu_lambda_index,1]
+        omega = mu_arr[max_mu_lambda_index,0]
         #print(f"decimating site {site_to_decimate} with mu = {healing_factor[site_to_decimate]}")
         #build a set with all of the neighbors
         #print(mu_components[site_to_decimate])
@@ -1024,23 +1183,54 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
         
         if keep_connected:
             strongly_connected_neighbor = sorted(list(G.iterNeighborsWeights(site_to_decimate)), key=lambda u: u[1], reverse=False)[0][0]
+            
             eid = G.edgeId(site_to_decimate, strongly_connected_neighbor)
-            sparsify_log.append(lambda_components[eid])
-            if time.time_ns()%1 == 0:
-                print(f"{lambda_components[eid]}  -- {mu_components[site_to_decimate]} -- {site_to_decimate}, {strongly_connected_neighbor}")
-        
+            comps = lambda_components[eid].split("_")
+            for comp in comps:
+                if comp[0] == 'e':
+                    #add the edges as tuples to this set so that only unique values stay
+                    keep_connected_set.add(eval(comp[1:]))
+            #sparsify_log.append(lambda_components[eid])
+            #print(components[site_to_decimate])
+            
+            #if time.time_ns()%1000 == 0 or site_to_decimate == 87:
+                #print(f"{lambda_components[eid]}  -- {mu_components[site_to_decimate]} -- {site_to_decimate}, {strongly_connected_neighbor}")
+                #print(f"keeping edge btwn {site_to_decimate} and {strongly_connected_neighbor}")
+        #print(omega)
         neighborhood = {u for u in G.iterNeighbors(site_to_decimate)}
         #print(len(neighborhood))
         #I've forgotten why I did this, it seems kind of stupid but I don't really want to bother changing it right now. 
         #it can probably be replaced by neighbors_checked = set()
         neighbors_checked = {-1}
         neighbors_checked.remove(-1)
+        if len(neighborhood) == 1 and partial:
+            nc = neighborhood.copy()
+            neighbor = nc.pop()
+            
+            neid = G.edgeId(neighbor, site_to_decimate)
+            
+            edge_comp_list = get_list_of_edge_components(G, neid)
+            for i in edge_comp_list:
+                partial_set.add((i, omega, G.weight(neighbor, site_to_decimate)))
         
+        if step > step_to_print_after:
+            print((time.time_ns()-t0)/1000000000)
+            t0 = time.time_ns()
+        #print(len(neighborhood))
+        #print(f"inloop-{site_to_decimate}")
+        new_edges = set()
+        num_ops = 0
         for neighbor in neighborhood:
             s = neighborhood - neighbors_checked # s is the set of unchecked neighbors. For high-degree networks this will be a significant speedup but probably not so for lattices
-            s.remove(neighbor) #because we've already checked it
+            s.remove(neighbor) #because we've already checked it. Also prevents a single neighbor from being double-counted
             if s: #... has any elements
                 for other_neighbor in s:
+                    
+                    if step > step_to_print_after:
+                        print("-")
+                        print((time.time_ns()-t0)/1000000000)
+                        t0 = time.time_ns()
+                    num_ops+=1
                     # before change to sets it was this: np.delete(neighborhood, neighbor).delete(neighbors_checked): 
                     # i = decimated site 
                     # j, k = neighbors
@@ -1053,23 +1243,59 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
                     #this is a long expression so I make it a variable. It's really just lambda_ui*lambda_uj/mu_u
                     a = (G.weight(site_to_decimate, other_neighbor)*G.weight(neighbor, site_to_decimate))/healing_factor[site_to_decimate]
                     
-                    new_weight = max(J_jk, a)
+                    new_edge_weight = max(J_jk, a)
+                    
+                    
                     
                     #returns whether the addition was successful (i.e, didn't make a multiedge)
-                    add_success = G.addEdge(neighbor, other_neighbor, new_weight, checkMultiEdge = True)
+                    add_success = G.addEdge(neighbor, other_neighbor, new_edge_weight, checkMultiEdge = True)
                     if not add_success:
-                        G.setWeight(neighbor, other_neighbor, new_weight)
-                        
+                        G.setWeight(neighbor, other_neighbor, new_edge_weight)
+                    new_edges.add((neighbor, other_neighbor))
+                    #print(f"added edge between {neighbor} and {other_neighbor}")
                     
                     #this edge will always exist
                     noneid = G.edgeId(neighbor, other_neighbor) #neighbor-other neighbor edge i d
                     stdneid = G.edgeId(site_to_decimate, neighbor) #site to decimate-neighbor edge i d
                     stdoneid = G.edgeId(site_to_decimate, other_neighbor)
+                    if step > step_to_print_after:
+                        print((time.time_ns()-t0)/1000000000)
+                        t0 = time.time_ns()
+                    if partial and J_jk > 0:
+                        #J_jk > 0 means that there is already a connection between neighbor and other_neighbor, so maximum rule will apply
+                        #print("partial log adding a new edge ...")
+                        if J_jk == new_edge_weight:
+                            #if J_jk is stronger, then both J_ui and J_uj get decimated
+                            uieid = G.edgeId(site_to_decimate, other_neighbor)
+                            ujeid = G.edgeId(site_to_decimate, neighbor)
+                            #visualize(G)
+                            #print(f"std = {site_to_decimate}, n = {neighbor}, on = {other_neighbor}")
+                            edge_comp_list_ui = get_list_of_edge_components(G, uieid)
+                            edge_comp_list_uj = get_list_of_edge_components(G, ujeid)
+                            #print(f"l1= {len(edge_comp_list_ui) + len(edge_comp_list_uj)}")
+
+                            for i in edge_comp_list_ui:
+                                #add the edge, the energy scale/omega value when it was decimated, and the value of the edge itself
+                                partial_set.add((i, omega, G.weight(site_to_decimate, other_neighbor)))
+                            for i in edge_comp_list_uj:
+                                #add the edge, the energy scale/omega value when it was decimated, and the value of the edge itself
+                                partial_set.add((i, omega, G.weight(site_to_decimate, neighbor)))
+                        else:
+                            #if lambda_ui*lambda_uj/mu_u, then J_jk gets decimated
+                            jkeid = G.edgeId(neighbor, other_neighbor)
+                            
+                            edge_comp_list = get_list_of_edge_components(G, jkeid)
+                            #print(f"l2= {len(edge_comp_list)}")
+                            for i in edge_comp_list:
+                                partial_set.add((i, omega, J_jk))
+                    if step > step_to_print_after:
+                        print(f"m...{(time.time_ns()-t0)/1000000000}" )
+                        t0 = time.time_ns()
                     
                     if logging_toggle:
                         
                         
-                        if J_jk == new_weight:
+                        if J_jk == new_edge_weight:
                             
                             edge_comp_list = get_list_of_edge_components(G, stdoneid)
                             for i in edge_comp_list:
@@ -1089,24 +1315,66 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
                             edge_components[(noneid)] = f"{edge_components[stdneid]}_{edge_components[stdoneid]}"
                         else:
                             edge_components[(noneid)] = f"{edge_components[stdneid]}_{edge_components[stdoneid]}"
+                    else:
+                        if J_jk != new_edge_weight:
+                            
+                            edge_components[(noneid)] = f"{edge_components[stdneid]}_{edge_components[stdoneid]}"
+                        #print(len(edge_components[(noneid)]))
+                        #print(len(f"{edge_components[stdneid]}_{edge_components[stdoneid]}".split("_")))
+                    if step > step_to_print_after:
+                        print((time.time_ns()-t0)/1000000000)
+                        t0 = time.time_ns()
                     
-                    
-                    if a == new_weight: # J_ij * J_ik / h_i
+                    if a == new_edge_weight: # J_ij * J_ik / h_i
                         lambda_components[noneid] = f"{lambda_components[stdneid]}_{lambda_components[stdoneid]}_{mu_components[site_to_decimate]}"
-                    
+                    if step > step_to_print_after:
+                        print((time.time_ns()-t0)/1000000000)
+                        t0 = time.time_ns()
                     
             #The neighbor that just looped through all of the other neighbors will
             # have had all of its connections made and calculated, so no reason to 
             # do anything to it for the rest of the loop. This just preserves the 
             # action done in the line with s.remove(neighbor) for future loops
             neighbors_checked.add(neighbor)
+        
+        if kawashima_filtering:
+            #loop through every newly-generated edge
+            for edge in new_edges:
+                # a majorating triangle is formed when, for an edge (i,j) there exists a site k s.t. ln(J_ij) < ln(J_ik); ln(J_ij) < ln(J_jk); and ln(J_ij) < ln(J_ik) + ln(J_jk) - ln(h_k)
+                i = edge[0]
+                j = edge[1]
+                #print(f"on edge {i}, {j}")
+                
+                J_ij = G.weight(i,j)
+                                
+                pair_neighborhood = set([k for k in G.iterNeighbors(i)]) & set([k for k in G.iterNeighbors(j)])
+                #print(pair_neighborhood)
+                #for each one, check whether it forms a majorating triangle with any of the neighbors of the site_to_decimate
+                for site in pair_neighborhood:
+                    J_ik = G.weight(i,site)
+                    J_jk = G.weight(j,site)
+                    #Though very rare, it's possible that a J value is small enough that math.log(J) throws a domain error even though the edge technically exists. This avoids those errors.
+                    if J_jk > 1e-320 and J_ik > 1e-320:
+                        if ln(J_ij) < ln(J_jk) and ln(J_ij) < ln(J_ik) and ln(J_ij) < ln(J_jk) + ln(J_ik) - ln(healing_factor[site]):
+                            #if so, delete it and break
+                            #print(f"removing edge between {i} and {j}")
+                            G.removeEdge(i,j)
+                            break
+                    #We don't need an else b/c any J_jk or J_ik value small enough to throw an error is too small to be greater than ln(J_ij)
+                    #it's technically possible for J_ij to be super small too but I think it will probably never happen
             
+        #print(num_ops)
+        #print((time.time_ns()-t0)/1000000000)
+        t0 = time.time_ns()
         decimated_sites = np.append(decimated_sites, components[site_to_decimate])
         #print(f"decimated site {site_to_decimate} with components {components[site_to_decimate]}")
         if logging_toggle:
             #decimation_log.append([len(decimation_log), site_to_decimate, healing_factor[site_to_decimate]])
             pass
         #finally we get to actually remove the node
+        #print(mu_components[site_to_decimate])
+        #print(completeness(G))
+        #visualize(G)
         G.removeNode(site_to_decimate)
         
         t1 = time.time_ns()
@@ -1118,12 +1386,20 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
     #nk.graphio.writeGraph(G, f"network_{time.time_ns()}_T.gml", nk.Format.GML)
     if visualizeStep:
         visualize(G)
-    if logging_toggle:
-        return G, decimation_log
-    elif sparsify_mode:
+    if sparsify_mode and not partial:
         return G, sparsify_log
+    elif sparsify_mode and partial and keep_connected:
+        return G, sparsify_log, partial_set, keep_connected_set
+    elif sparsify_mode and partial:
+        return G, sparsify_log, partial_set, set()
+    elif logging_toggle and not partial:
+        return G, decimation_log
+    elif logging_toggle and partial:
+        return G, decimation_log, partial_set
+    
     elif neil_mode:
         return G, decimated_sites
+    
     return G
 
 
@@ -1363,741 +1639,41 @@ def sdrg_step_partial(G, neil_mode = False, decimated_sites=[], logging_toggle =
 
 
 
-@jit(nopython=False)
-def numba_sdrg_step(G, neil_mode = False, decimated_sites=[0], logging_toggle = True, decimation_log = [1], sparsify_mode = True, sparsify_log = [""], keep_connected=False, visualizeStep = False, verbose=True):
-    """This method does a single iteration of the SDRG sparsification. 
-        - G: This is a networkit graph. It should be fully-connected/only contain one component, and needs to have edge weights + mu values (healing factor) + components (initialized with each node's own index)
-        - neil_mode: Neil has a sparsification algorithm that outputs, at the end, all of the decimated clusters. This toggle just changes to output to this for checking the sdrg results against his
-        - decimated_sites: only relevant in neil mode; this stores the sites that are decimated in each step as clusters
-        - logging_toggle: This is my own logging; it is at time of writing, not used. Basically just an alternative to neil_mode logging
-        - decimation_log: decimation_log is to logging_toggle as decimated_sites is to neil_mode. tracks the edges that get maximum rule-d out each step
-        - sparsify_log: this contains all of the edges which were components of sites that were decimated
-        - visualizeStep: visualizes the network AFTER applying the sdrg step using networkx. This gets reeeaaaalllllyyyy slow above like a hundred nodes or so
-        - keep_connected: If true, this adds the components of the strongest coupling of each decimated site to the sparsification log when it gets decimated. This guarantees that the cluster represented by the site never becomes isolated/forms a new component when the graph is rebuilt.
-    """
-    t0 = time.time_ns()
-    edge_components = G.getEdgeAttribute("e_comp", str)
-    n_nodes = G.numberOfNodes()
-    healing_factor = G.getNodeAttribute("mu", float)
-    components = G.getNodeAttribute("components", str)
-    is_active = G.getNodeAttribute("active", int)
-    mu_components = G.getNodeAttribute("mu_comp", str)
-    lambda_components = G.getEdgeAttribute("lambda_comp", str)
-    #Stopping condition
-    if n_nodes == 1:
-        if verbose:
-            print("Network is fully sparsified")
-        last_site = [u for u in G.iterNodes()]
-
-        decimated_sites = np.append(decimated_sites, components[last_site[0]])
-        if logging_toggle:
-            return G, decimation_log
-        elif sparsify_mode:
-            return G, sparsify_log
-        elif neil_mode:
-            return G, decimated_sites
-        return G
-     
-    #Put all mu and lambda values into a single np array so that we can easily choose the greatest value
-    mu_arr = np.array([np.array([healing_factor[u], u]).T for u in G.iterNodes()])
-    lambda_arr = np.array([np.array([G.weight(u,v), u, v]).T for u,v in G.iterEdges()])
-            
-    max_mu_lambda_index = np.argmax(np.concat((mu_arr[:,0], lambda_arr[:,0])))
-    
-    t1 = time.time_ns()
-    
-    if max_mu_lambda_index > n_nodes-1: #true iff biggest value is a lambda
-        edge_to_decimate = lambda_arr[max_mu_lambda_index-n_nodes, 1:] #np list of length 2
+def test7():
+    L_list = [8, 16, 32]
+    averages = []
+    for L in L_list:
+        n_edges_list_for_L = []
+        for i in range(15):
+            G = generate_square_lattice(L, L)
+            gs = sdrg_sparsify(G, use_kawashima=True)
+            n_edges = gs.numberOfEdges()
+            n_edges_list_for_L.append(n_edges)
+        print("----------------------")
+        print(np.average(n_edges_list_for_L))
+        averages.append(np.average(n_edges_list_for_L))
+        print("----------------------")
+    print(averages)
         
-        #union the two sets containing neighbors of u and v
-        # sets automatically remove the duplicates. This now contains only the nodes which are neighbors of/connected to either
-        pair_neighborhood = {u for u in G.iterNeighbors(edge_to_decimate[0])} | {v for v in G.iterNeighbors(edge_to_decimate[1])}
-
-        #give a name to each side of the edge
-        u = edge_to_decimate[0]
-        v = edge_to_decimate[1]
-        #print(f"decimating edge {edge_to_decimate} with lambda = {G.weight(u,v)}") 
-
-        #note that, as a result of this step, this sdrg algorithm creates new node indices up to 2x the original size of the graph. This is important for some methods like fast_random_choose()
-        k = G.addNode() # returns new node id, so k = new node id
-        #if logging_toggle:
-            #decimation_log.append
-            #decimation_log.append([len(decimation_log), edge_to_decimate, G.weight(u,v)])
-        
-        #TODO: use log and exp to convert mults and divides to adds and substracts
-        #calculate a new healing factor
-        #math.exp(math.log(healing_factor[u]) + math.log(healing_factor[v]) - math.log(G.weight(u,v)))
-        h_k = (healing_factor[u]*healing_factor[v])/(G.weight(u,v))
-
-        healing_factor[k] = h_k
-        #keep track of our components
-        components[k] = f"{components[u]}_{components[v]}"
-        mu_components[k] = f"{mu_components[u]}_{mu_components[u]}_{lambda_components[G.edgeId(u,v)]}"
-        is_active[k] = 0
-        
-        for neighbor in pair_neighborhood:
-            #we are merging nodes u and v
-            # i for each neighbor
-            J_ui = G.weight(u, neighbor)
-            J_vi = G.weight(v, neighbor)
-            
-            
-            new_edge_weight = max(J_ui, J_vi)
-            G.addEdge(k, neighbor, new_edge_weight)
-            eid = G.edgeId(k, neighbor)
-            if J_ui == new_edge_weight:
-                #print(get_list_of_edge_components(G, vneid))
-                uneid = G.edgeId(u, neighbor)
-                lambda_components[eid] = lambda_components[uneid]
-            else:
-                vneid = G.edgeId(v, neighbor)
-                lambda_components[eid] = lambda_components[vneid]
-            
-            if J_ui + J_vi > new_edge_weight: #checks that the maximum rule removes something; in other terms, that J_ui and J_vi both exist
-                uneid = G.edgeId(u, neighbor)
-                vneid = G.edgeId(v, neighbor)
-                if logging_toggle:
-                    if J_ui == new_edge_weight:
-                        #print(get_list_of_edge_components(G, vneid))
-                        edge_comp_list = get_list_of_edge_components(G, vneid)
-                        for i in edge_comp_list:
-                            decimation_log.append(i)
-                    else:
-                        edge_comp_list = get_list_of_edge_components(G, uneid)
-                        for i in edge_comp_list:
-                            decimation_log.append(i)
-                        #decimation_log.append((u,neighbor))
-                if logging_toggle:
-                    edge_components[eid] = f"{edge_components[uneid]}_{edge_components[vneid]}"
-            else:
-                #G.addEdge(k, neighbor, new_edge_weight)
-                #eid = G.edgeId(k, neighbor)
-                if logging_toggle:
-                    edge_components[eid] = f"{edge_components[G.edgeId(u, neighbor)]}" if G.weight(u, neighbor) > 0 else f"{edge_components[G.edgeId(v, neighbor)]}"
-            
-        #remove nodes at end. We had to wait b/c otherwise we can't calculate weights in loop
-        G.removeNode(u)
-        G.removeNode(v)
-        
-    else: #true iff biggest val is a mu
-        
-        #since we put the mu_arr in front of the lambda_arr, we can directly access the mu_arr list with our max_mu_lambda_index without getting indexing errors
-        site_to_decimate = mu_arr[max_mu_lambda_index,1]
-        #print(f"decimating site {site_to_decimate} with mu = {healing_factor[site_to_decimate]}")
-        #build a set with all of the neighbors
-        #print(mu_components[site_to_decimate])
-        sparsify_log.append(mu_components[site_to_decimate])
-        
-        if keep_connected:
-            strongly_connected_neighbor = sorted(list(G.iterNeighborsWeights(site_to_decimate)), key=lambda u: u[1], reverse=False)[0][0]
-            eid = G.edgeId(site_to_decimate, strongly_connected_neighbor)
-            sparsify_log.append(lambda_components[eid])
-            if time.time_ns()%1 == 0:
-                print(f"{lambda_components[eid]}  -- {mu_components[site_to_decimate]} -- {site_to_decimate}, {strongly_connected_neighbor}")
-        
-        neighborhood = {u for u in G.iterNeighbors(site_to_decimate)}
-        #print(len(neighborhood))
-        #I've forgotten why I did this, it seems kind of stupid but I don't really want to bother changing it right now. 
-        #it can probably be replaced by neighbors_checked = set()
-        neighbors_checked = {-1}
-        neighbors_checked.remove(-1)
-        
-        for neighbor in neighborhood:
-            s = neighborhood - neighbors_checked # s is the set of unchecked neighbors. For high-degree networks this will be a significant speedup but probably not so for lattices
-            s.remove(neighbor) #because we've already checked it
-            if s: #... has any elements
-                for other_neighbor in s:
-                    # before change to sets it was this: np.delete(neighborhood, neighbor).delete(neighbors_checked): 
-                    # i = decimated site 
-                    # j, k = neighbors
-    
-                    J_jk = G.weight(neighbor, other_neighbor) # can be 0 if there was no link
-                    #r_hi = -math.log(healing_factor[site_to_decimate])
-                    #kappa_ik = -math.log(G.weight(site_to_decimate, other_neighbor))
-                    #kappa_ij = -math.log(G.weight(neighbor, site_to_decimate))
-                    
-                    #this is a long expression so I make it a variable. It's really just lambda_ui*lambda_uj/mu_u
-                    a = (G.weight(site_to_decimate, other_neighbor)*G.weight(neighbor, site_to_decimate))/healing_factor[site_to_decimate]
-                    
-                    new_weight = max(J_jk, a)
-                    
-                    #returns whether the addition was successful (i.e, didn't make a multiedge)
-                    add_success = G.addEdge(neighbor, other_neighbor, new_weight, checkMultiEdge = True)
-                    if not add_success:
-                        G.setWeight(neighbor, other_neighbor, new_weight)
-                        
-                    
-                    #this edge will always exist
-                    noneid = G.edgeId(neighbor, other_neighbor) #neighbor-other neighbor edge i d
-                    stdneid = G.edgeId(site_to_decimate, neighbor) #site to decimate-neighbor edge i d
-                    stdoneid = G.edgeId(site_to_decimate, other_neighbor)
-                    
-                    if logging_toggle:
-                        
-                        
-                        if J_jk == new_weight:
-                            
-                            edge_comp_list = get_list_of_edge_components(G, stdoneid)
-                            for i in edge_comp_list:
-                                decimation_log.append(i)
-                            edge_comp_list = get_list_of_edge_components(G, stdneid)
-                            for i in edge_comp_list:
-                                decimation_log.append(i)
-                            #decimation_log.append((site_to_decimate, other_neighbor))
-                            #decimation_log.append((site_to_decimate, neighbor))
-                            
-                        elif J_jk > 0: # for this elif and the else, we are modifying the weight by the weights J_ui and J_vi, so add those
-                            edge_comp_list = get_list_of_edge_components(G, noneid)
-                            for i in edge_comp_list:
-                                decimation_log.append(i)    
-                            #decimation_log.append((neighbor, other_neighbor))
-                            
-                            edge_components[(noneid)] = f"{edge_components[stdneid]}_{edge_components[stdoneid]}"
-                        else:
-                            edge_components[(noneid)] = f"{edge_components[stdneid]}_{edge_components[stdoneid]}"
-                    
-                    
-                    if a == new_weight: # J_ij * J_ik / h_i
-                        lambda_components[noneid] = f"{lambda_components[stdneid]}_{lambda_components[stdoneid]}_{mu_components[site_to_decimate]}"
-                    
-                    
-            #The neighbor that just looped through all of the other neighbors will
-            # have had all of its connections made and calculated, so no reason to 
-            # do anything to it for the rest of the loop. This just preserves the 
-            # action done in the line with s.remove(neighbor) for future loops
-            neighbors_checked.add(neighbor)
-            
-        decimated_sites = np.append(decimated_sites, components[site_to_decimate])
-        #print(f"decimated site {site_to_decimate} with components {components[site_to_decimate]}")
-        if logging_toggle:
-            #decimation_log.append([len(decimation_log), site_to_decimate, healing_factor[site_to_decimate]])
-            pass
-        #finally we get to actually remove the node
-        G.removeNode(site_to_decimate)
-    t2 = time.time_ns()
-    #print(f"{(t1-t0)/1000000000}s for 0-1; {(t2-t1)/1000000000} for 1-2; {max_mu_lambda_index > n_nodes-1}")
-    
-    #nk.graphio.writeGraph(G, f"network_{time.time_ns()}_T.gml", nk.Format.GML)
-    if visualizeStep:
-        visualize(G)
-    if logging_toggle:
-        return G, decimation_log
-    elif sparsify_mode:
-        return G, sparsify_log
-    elif neil_mode:
-        return G, decimated_sites
-    return G
-
-
-@jit(nopython=False)
-def numba_py_sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, decimation_log = [], sparsify_mode = True, sparsify_log = [], keep_connected=False, visualizeStep = False, verbose=True):
-    """This method does a single iteration of the SDRG sparsification. 
-        - G: This is a networkit graph. It should be fully-connected/only contain one component, and needs to have edge weights + mu values (healing factor) + components (initialized with each node's own index)
-        - neil_mode: Neil has a sparsification algorithm that outputs, at the end, all of the decimated clusters. This toggle just changes to output to this for checking the sdrg results against his
-        - decimated_sites: only relevant in neil mode; this stores the sites that are decimated in each step as clusters
-        - logging_toggle: This is my own logging; it is at time of writing, not used. Basically just an alternative to neil_mode logging
-        - decimation_log: decimation_log is to logging_toggle as decimated_sites is to neil_mode. tracks the edges that get maximum rule-d out each step
-        - sparsify_log: this contains all of the edges which were components of sites that were decimated
-        - visualizeStep: visualizes the network AFTER applying the sdrg step using networkx. This gets reeeaaaalllllyyyy slow above like a hundred nodes or so
-        - keep_connected: If true, this adds the components of the strongest coupling of each decimated site to the sparsification log when it gets decimated. This guarantees that the cluster represented by the site never becomes isolated/forms a new component when the graph is rebuilt.
-    """
-    t0 = time.time_ns()
-    edge_components = G.getEdgeAttribute("e_comp", str)
-    n_nodes = G.numberOfNodes()
-    healing_factor = G.getNodeAttribute("mu", float)
-    components = G.getNodeAttribute("components", str)
-    is_active = G.getNodeAttribute("active", int)
-    mu_components = G.getNodeAttribute("mu_comp", str)
-    lambda_components = G.getEdgeAttribute("lambda_comp", str)
-    #Stopping condition
-    if n_nodes == 1:
-        if verbose:
-            print("Network is fully sparsified")
-        last_site = [u for u in G.iterNodes()]
-
-        decimated_sites = np.append(decimated_sites, components[last_site[0]])
-        if logging_toggle:
-            return G, decimation_log
-        elif sparsify_mode:
-            return G, sparsify_log
-        elif neil_mode:
-            return G, decimated_sites
-        return G
-     
-    #Put all mu and lambda values into a single np array so that we can easily choose the greatest value
-    mu_arr = np.array([np.array([healing_factor[u], u]).T for u in G.iterNodes()])
-    lambda_arr = np.array([np.array([G.weight(u,v), u, v]).T for u,v in G.iterEdges()])
-            
-    max_mu_lambda_index = np.argmax(np.concat((mu_arr[:,0], lambda_arr[:,0])))
-    
-    t1 = time.time_ns()
-    
-    if max_mu_lambda_index > n_nodes-1: #true iff biggest value is a lambda
-        edge_to_decimate = lambda_arr[max_mu_lambda_index-n_nodes, 1:] #np list of length 2
-        
-        #union the two sets containing neighbors of u and v
-        # sets automatically remove the duplicates. This now contains only the nodes which are neighbors of/connected to either
-        pair_neighborhood = {u for u in G.iterNeighbors(edge_to_decimate[0])} | {v for v in G.iterNeighbors(edge_to_decimate[1])}
-
-        #give a name to each side of the edge
-        u = edge_to_decimate[0]
-        v = edge_to_decimate[1]
-        #print(f"decimating edge {edge_to_decimate} with lambda = {G.weight(u,v)}") 
-
-        #note that, as a result of this step, this sdrg algorithm creates new node indices up to 2x the original size of the graph. This is important for some methods like fast_random_choose()
-        k = G.addNode() # returns new node id, so k = new node id
-        #if logging_toggle:
-            #decimation_log.append
-            #decimation_log.append([len(decimation_log), edge_to_decimate, G.weight(u,v)])
-        
-        #TODO: use log and exp to convert mults and divides to adds and substracts
-        #calculate a new healing factor
-        #math.exp(math.log(healing_factor[u]) + math.log(healing_factor[v]) - math.log(G.weight(u,v)))
-        h_k = (healing_factor[u]*healing_factor[v])/(G.weight(u,v))
-
-        healing_factor[k] = h_k
-        #keep track of our components
-        components[k] = f"{components[u]}_{components[v]}"
-        mu_components[k] = f"{mu_components[u]}_{mu_components[u]}_{lambda_components[G.edgeId(u,v)]}"
-        is_active[k] = 0
-        
-        for neighbor in pair_neighborhood:
-            #we are merging nodes u and v
-            # i for each neighbor
-            J_ui = G.weight(u, neighbor)
-            J_vi = G.weight(v, neighbor)
-            
-            
-            new_edge_weight = max(J_ui, J_vi)
-            G.addEdge(k, neighbor, new_edge_weight)
-            eid = G.edgeId(k, neighbor)
-            if J_ui == new_edge_weight:
-                #print(get_list_of_edge_components(G, vneid))
-                uneid = G.edgeId(u, neighbor)
-                lambda_components[eid] = lambda_components[uneid]
-            else:
-                vneid = G.edgeId(v, neighbor)
-                lambda_components[eid] = lambda_components[vneid]
-            
-            if J_ui + J_vi > new_edge_weight: #checks that the maximum rule removes something; in other terms, that J_ui and J_vi both exist
-                uneid = G.edgeId(u, neighbor)
-                vneid = G.edgeId(v, neighbor)
-                if logging_toggle:
-                    if J_ui == new_edge_weight:
-                        #print(get_list_of_edge_components(G, vneid))
-                        edge_comp_list = get_list_of_edge_components(G, vneid)
-                        for i in edge_comp_list:
-                            decimation_log.append(i)
-                    else:
-                        edge_comp_list = get_list_of_edge_components(G, uneid)
-                        for i in edge_comp_list:
-                            decimation_log.append(i)
-                        #decimation_log.append((u,neighbor))
-                if logging_toggle:
-                    edge_components[eid] = f"{edge_components[uneid]}_{edge_components[vneid]}"
-            else:
-                #G.addEdge(k, neighbor, new_edge_weight)
-                #eid = G.edgeId(k, neighbor)
-                if logging_toggle:
-                    edge_components[eid] = f"{edge_components[G.edgeId(u, neighbor)]}" if G.weight(u, neighbor) > 0 else f"{edge_components[G.edgeId(v, neighbor)]}"
-            
-        #remove nodes at end. We had to wait b/c otherwise we can't calculate weights in loop
-        G.removeNode(u)
-        G.removeNode(v)
-        
-    else: #true iff biggest val is a mu
-        
-        #since we put the mu_arr in front of the lambda_arr, we can directly access the mu_arr list with our max_mu_lambda_index without getting indexing errors
-        site_to_decimate = mu_arr[max_mu_lambda_index,1]
-        #print(f"decimating site {site_to_decimate} with mu = {healing_factor[site_to_decimate]}")
-        #build a set with all of the neighbors
-        #print(mu_components[site_to_decimate])
-        sparsify_log.append(mu_components[site_to_decimate])
-        
-        if keep_connected:
-            strongly_connected_neighbor = sorted(list(G.iterNeighborsWeights(site_to_decimate)), key=lambda u: u[1], reverse=False)[0][0]
-            eid = G.edgeId(site_to_decimate, strongly_connected_neighbor)
-            sparsify_log.append(lambda_components[eid])
-            if time.time_ns()%1 == 0:
-                print(f"{lambda_components[eid]}  -- {mu_components[site_to_decimate]} -- {site_to_decimate}, {strongly_connected_neighbor}")
-        
-        neighborhood = {u for u in G.iterNeighbors(site_to_decimate)}
-        #print(len(neighborhood))
-        #I've forgotten why I did this, it seems kind of stupid but I don't really want to bother changing it right now. 
-        #it can probably be replaced by neighbors_checked = set()
-        neighbors_checked = {-1}
-        neighbors_checked.remove(-1)
-        
-        for neighbor in neighborhood:
-            s = neighborhood - neighbors_checked # s is the set of unchecked neighbors. For high-degree networks this will be a significant speedup but probably not so for lattices
-            s.remove(neighbor) #because we've already checked it
-            if s: #... has any elements
-                for other_neighbor in s:
-                    # before change to sets it was this: np.delete(neighborhood, neighbor).delete(neighbors_checked): 
-                    # i = decimated site 
-                    # j, k = neighbors
-    
-                    J_jk = G.weight(neighbor, other_neighbor) # can be 0 if there was no link
-                    #r_hi = -math.log(healing_factor[site_to_decimate])
-                    #kappa_ik = -math.log(G.weight(site_to_decimate, other_neighbor))
-                    #kappa_ij = -math.log(G.weight(neighbor, site_to_decimate))
-                    
-                    #this is a long expression so I make it a variable. It's really just lambda_ui*lambda_uj/mu_u
-                    a = (G.weight(site_to_decimate, other_neighbor)*G.weight(neighbor, site_to_decimate))/healing_factor[site_to_decimate]
-                    
-                    new_weight = max(J_jk, a)
-                    
-                    #returns whether the addition was successful (i.e, didn't make a multiedge)
-                    add_success = G.addEdge(neighbor, other_neighbor, new_weight, checkMultiEdge = True)
-                    if not add_success:
-                        G.setWeight(neighbor, other_neighbor, new_weight)
-                        
-                    
-                    #this edge will always exist
-                    noneid = G.edgeId(neighbor, other_neighbor) #neighbor-other neighbor edge i d
-                    stdneid = G.edgeId(site_to_decimate, neighbor) #site to decimate-neighbor edge i d
-                    stdoneid = G.edgeId(site_to_decimate, other_neighbor)
-                    
-                    if logging_toggle:
-                        
-                        
-                        if J_jk == new_weight:
-                            
-                            edge_comp_list = get_list_of_edge_components(G, stdoneid)
-                            for i in edge_comp_list:
-                                decimation_log.append(i)
-                            edge_comp_list = get_list_of_edge_components(G, stdneid)
-                            for i in edge_comp_list:
-                                decimation_log.append(i)
-                            #decimation_log.append((site_to_decimate, other_neighbor))
-                            #decimation_log.append((site_to_decimate, neighbor))
-                            
-                        elif J_jk > 0: # for this elif and the else, we are modifying the weight by the weights J_ui and J_vi, so add those
-                            edge_comp_list = get_list_of_edge_components(G, noneid)
-                            for i in edge_comp_list:
-                                decimation_log.append(i)    
-                            #decimation_log.append((neighbor, other_neighbor))
-                            
-                            edge_components[(noneid)] = f"{edge_components[stdneid]}_{edge_components[stdoneid]}"
-                        else:
-                            edge_components[(noneid)] = f"{edge_components[stdneid]}_{edge_components[stdoneid]}"
-                    
-                    
-                    if a == new_weight: # J_ij * J_ik / h_i
-                        lambda_components[noneid] = f"{lambda_components[stdneid]}_{lambda_components[stdoneid]}_{mu_components[site_to_decimate]}"
-                    
-                    
-            #The neighbor that just looped through all of the other neighbors will
-            # have had all of its connections made and calculated, so no reason to 
-            # do anything to it for the rest of the loop. This just preserves the 
-            # action done in the line with s.remove(neighbor) for future loops
-            neighbors_checked.add(neighbor)
-            
-        decimated_sites = np.append(decimated_sites, components[site_to_decimate])
-        #print(f"decimated site {site_to_decimate} with components {components[site_to_decimate]}")
-        if logging_toggle:
-            #decimation_log.append([len(decimation_log), site_to_decimate, healing_factor[site_to_decimate]])
-            pass
-        #finally we get to actually remove the node
-        G.removeNode(site_to_decimate)
-    t2 = time.time_ns()
-    #print(f"{(t1-t0)/1000000000}s for 0-1; {(t2-t1)/1000000000} for 1-2; {max_mu_lambda_index > n_nodes-1}")
-    
-    #nk.graphio.writeGraph(G, f"network_{time.time_ns()}_T.gml", nk.Format.GML)
-    if visualizeStep:
-        visualize(G)
-    if logging_toggle:
-        return G, decimation_log
-    elif sparsify_mode:
-        return G, sparsify_log
-    elif neil_mode:
-        return G, decimated_sites
-    return G
-
-
-def no_numba_sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, decimation_log = [], sparsify_mode = True, sparsify_log = [], keep_connected=False, visualizeStep = False, verbose=True):
-    """This method does a single iteration of the SDRG sparsification. 
-        - G: This is a networkit graph. It should be fully-connected/only contain one component, and needs to have edge weights + mu values (healing factor) + components (initialized with each node's own index)
-        - neil_mode: Neil has a sparsification algorithm that outputs, at the end, all of the decimated clusters. This toggle just changes to output to this for checking the sdrg results against his
-        - decimated_sites: only relevant in neil mode; this stores the sites that are decimated in each step as clusters
-        - logging_toggle: This is my own logging; it is at time of writing, not used. Basically just an alternative to neil_mode logging
-        - decimation_log: decimation_log is to logging_toggle as decimated_sites is to neil_mode. tracks the edges that get maximum rule-d out each step
-        - sparsify_log: this contains all of the edges which were components of sites that were decimated
-        - visualizeStep: visualizes the network AFTER applying the sdrg step using networkx. This gets reeeaaaalllllyyyy slow above like a hundred nodes or so
-        - keep_connected: If true, this adds the components of the strongest coupling of each decimated site to the sparsification log when it gets decimated. This guarantees that the cluster represented by the site never becomes isolated/forms a new component when the graph is rebuilt.
-    """
-    t0 = time.time_ns()
-    edge_components = G.getEdgeAttribute("e_comp", str)
-    n_nodes = G.numberOfNodes()
-    healing_factor = G.getNodeAttribute("mu", float)
-    components = G.getNodeAttribute("components", str)
-    is_active = G.getNodeAttribute("active", int)
-    mu_components = G.getNodeAttribute("mu_comp", str)
-    lambda_components = G.getEdgeAttribute("lambda_comp", str)
-    #Stopping condition
-    if n_nodes == 1:
-        if verbose:
-            print("Network is fully sparsified")
-        last_site = [u for u in G.iterNodes()]
-
-        decimated_sites = np.append(decimated_sites, components[last_site[0]])
-        if logging_toggle:
-            return G, decimation_log
-        elif sparsify_mode:
-            return G, sparsify_log
-        elif neil_mode:
-            return G, decimated_sites
-        return G
-     
-    #Put all mu and lambda values into a single np array so that we can easily choose the greatest value
-    mu_arr = np.array([np.array([healing_factor[u], u]).T for u in G.iterNodes()])
-    lambda_arr = np.array([np.array([G.weight(u,v), u, v]).T for u,v in G.iterEdges()])
-            
-    max_mu_lambda_index = np.argmax(np.concat((mu_arr[:,0], lambda_arr[:,0])))
-    
-    t1 = time.time_ns()
-    
-    if max_mu_lambda_index > n_nodes-1: #true iff biggest value is a lambda
-        edge_to_decimate = lambda_arr[max_mu_lambda_index-n_nodes, 1:] #np list of length 2
-        
-        #union the two sets containing neighbors of u and v
-        # sets automatically remove the duplicates. This now contains only the nodes which are neighbors of/connected to either
-        pair_neighborhood = {u for u in G.iterNeighbors(edge_to_decimate[0])} | {v for v in G.iterNeighbors(edge_to_decimate[1])}
-
-        #give a name to each side of the edge
-        u = edge_to_decimate[0]
-        v = edge_to_decimate[1]
-        #print(f"decimating edge {edge_to_decimate} with lambda = {G.weight(u,v)}") 
-
-        #note that, as a result of this step, this sdrg algorithm creates new node indices up to 2x the original size of the graph. This is important for some methods like fast_random_choose()
-        k = G.addNode() # returns new node id, so k = new node id
-        #if logging_toggle:
-            #decimation_log.append
-            #decimation_log.append([len(decimation_log), edge_to_decimate, G.weight(u,v)])
-        
-        #TODO: use log and exp to convert mults and divides to adds and substracts
-        #calculate a new healing factor
-        #math.exp(math.log(healing_factor[u]) + math.log(healing_factor[v]) - math.log(G.weight(u,v)))
-        h_k = (healing_factor[u]*healing_factor[v])/(G.weight(u,v))
-
-        healing_factor[k] = h_k
-        #keep track of our components
-        components[k] = f"{components[u]}_{components[v]}"
-        mu_components[k] = f"{mu_components[u]}_{mu_components[u]}_{lambda_components[G.edgeId(u,v)]}"
-        is_active[k] = 0
-        
-        for neighbor in pair_neighborhood:
-            #we are merging nodes u and v
-            # i for each neighbor
-            J_ui = G.weight(u, neighbor)
-            J_vi = G.weight(v, neighbor)
-            
-            
-            new_edge_weight = max(J_ui, J_vi)
-            G.addEdge(k, neighbor, new_edge_weight)
-            eid = G.edgeId(k, neighbor)
-            if J_ui == new_edge_weight:
-                #print(get_list_of_edge_components(G, vneid))
-                uneid = G.edgeId(u, neighbor)
-                lambda_components[eid] = lambda_components[uneid]
-            else:
-                vneid = G.edgeId(v, neighbor)
-                lambda_components[eid] = lambda_components[vneid]
-            
-            if J_ui + J_vi > new_edge_weight: #checks that the maximum rule removes something; in other terms, that J_ui and J_vi both exist
-                uneid = G.edgeId(u, neighbor)
-                vneid = G.edgeId(v, neighbor)
-                if logging_toggle:
-                    if J_ui == new_edge_weight:
-                        #print(get_list_of_edge_components(G, vneid))
-                        edge_comp_list = get_list_of_edge_components(G, vneid)
-                        for i in edge_comp_list:
-                            decimation_log.append(i)
-                    else:
-                        edge_comp_list = get_list_of_edge_components(G, uneid)
-                        for i in edge_comp_list:
-                            decimation_log.append(i)
-                        #decimation_log.append((u,neighbor))
-                if logging_toggle:
-                    edge_components[eid] = f"{edge_components[uneid]}_{edge_components[vneid]}"
-            else:
-                #G.addEdge(k, neighbor, new_edge_weight)
-                #eid = G.edgeId(k, neighbor)
-                if logging_toggle:
-                    edge_components[eid] = f"{edge_components[G.edgeId(u, neighbor)]}" if G.weight(u, neighbor) > 0 else f"{edge_components[G.edgeId(v, neighbor)]}"
-            
-        #remove nodes at end. We had to wait b/c otherwise we can't calculate weights in loop
-        G.removeNode(u)
-        G.removeNode(v)
-        
-    else: #true iff biggest val is a mu
-        
-        #since we put the mu_arr in front of the lambda_arr, we can directly access the mu_arr list with our max_mu_lambda_index without getting indexing errors
-        site_to_decimate = mu_arr[max_mu_lambda_index,1]
-        #print(f"decimating site {site_to_decimate} with mu = {healing_factor[site_to_decimate]}")
-        #build a set with all of the neighbors
-        #print(mu_components[site_to_decimate])
-        sparsify_log.append(mu_components[site_to_decimate])
-        
-        if keep_connected:
-            strongly_connected_neighbor = sorted(list(G.iterNeighborsWeights(site_to_decimate)), key=lambda u: u[1], reverse=False)[0][0]
-            eid = G.edgeId(site_to_decimate, strongly_connected_neighbor)
-            sparsify_log.append(lambda_components[eid])
-            if time.time_ns()%1 == 0:
-                print(f"{lambda_components[eid]}  -- {mu_components[site_to_decimate]} -- {site_to_decimate}, {strongly_connected_neighbor}")
-        
-        neighborhood = {u for u in G.iterNeighbors(site_to_decimate)}
-        #print(len(neighborhood))
-        #I've forgotten why I did this, it seems kind of stupid but I don't really want to bother changing it right now. 
-        #it can probably be replaced by neighbors_checked = set()
-        neighbors_checked = {-1}
-        neighbors_checked.remove(-1)
-        
-        for neighbor in neighborhood:
-            s = neighborhood - neighbors_checked # s is the set of unchecked neighbors. For high-degree networks this will be a significant speedup but probably not so for lattices
-            s.remove(neighbor) #because we've already checked it
-            if s: #... has any elements
-                for other_neighbor in s:
-                    # before change to sets it was this: np.delete(neighborhood, neighbor).delete(neighbors_checked): 
-                    # i = decimated site 
-                    # j, k = neighbors
-    
-                    J_jk = G.weight(neighbor, other_neighbor) # can be 0 if there was no link
-                    #r_hi = -math.log(healing_factor[site_to_decimate])
-                    #kappa_ik = -math.log(G.weight(site_to_decimate, other_neighbor))
-                    #kappa_ij = -math.log(G.weight(neighbor, site_to_decimate))
-                    
-                    #this is a long expression so I make it a variable. It's really just lambda_ui*lambda_uj/mu_u
-                    a = (G.weight(site_to_decimate, other_neighbor)*G.weight(neighbor, site_to_decimate))/healing_factor[site_to_decimate]
-                    
-                    new_weight = max(J_jk, a)
-                    
-                    #returns whether the addition was successful (i.e, didn't make a multiedge)
-                    add_success = G.addEdge(neighbor, other_neighbor, new_weight, checkMultiEdge = True)
-                    if not add_success:
-                        G.setWeight(neighbor, other_neighbor, new_weight)
-                        
-                    
-                    #this edge will always exist
-                    noneid = G.edgeId(neighbor, other_neighbor) #neighbor-other neighbor edge i d
-                    stdneid = G.edgeId(site_to_decimate, neighbor) #site to decimate-neighbor edge i d
-                    stdoneid = G.edgeId(site_to_decimate, other_neighbor)
-                    
-                    if logging_toggle:
-                        
-                        
-                        if J_jk == new_weight:
-                            
-                            edge_comp_list = get_list_of_edge_components(G, stdoneid)
-                            for i in edge_comp_list:
-                                decimation_log.append(i)
-                            edge_comp_list = get_list_of_edge_components(G, stdneid)
-                            for i in edge_comp_list:
-                                decimation_log.append(i)
-                            #decimation_log.append((site_to_decimate, other_neighbor))
-                            #decimation_log.append((site_to_decimate, neighbor))
-                            
-                        elif J_jk > 0: # for this elif and the else, we are modifying the weight by the weights J_ui and J_vi, so add those
-                            edge_comp_list = get_list_of_edge_components(G, noneid)
-                            for i in edge_comp_list:
-                                decimation_log.append(i)    
-                            #decimation_log.append((neighbor, other_neighbor))
-                            
-                            edge_components[(noneid)] = f"{edge_components[stdneid]}_{edge_components[stdoneid]}"
-                        else:
-                            edge_components[(noneid)] = f"{edge_components[stdneid]}_{edge_components[stdoneid]}"
-                    
-                    
-                    if a == new_weight: # J_ij * J_ik / h_i
-                        lambda_components[noneid] = f"{lambda_components[stdneid]}_{lambda_components[stdoneid]}_{mu_components[site_to_decimate]}"
-                    
-                    
-            #The neighbor that just looped through all of the other neighbors will
-            # have had all of its connections made and calculated, so no reason to 
-            # do anything to it for the rest of the loop. This just preserves the 
-            # action done in the line with s.remove(neighbor) for future loops
-            neighbors_checked.add(neighbor)
-            
-        decimated_sites = np.append(decimated_sites, components[site_to_decimate])
-        #print(f"decimated site {site_to_decimate} with components {components[site_to_decimate]}")
-        if logging_toggle:
-            #decimation_log.append([len(decimation_log), site_to_decimate, healing_factor[site_to_decimate]])
-            pass
-        #finally we get to actually remove the node
-        G.removeNode(site_to_decimate)
-    t2 = time.time_ns()
-    #print(f"{(t1-t0)/1000000000}s for 0-1; {(t2-t1)/1000000000} for 1-2; {max_mu_lambda_index > n_nodes-1}")
-    
-    #nk.graphio.writeGraph(G, f"network_{time.time_ns()}_T.gml", nk.Format.GML)
-    if visualizeStep:
-        visualize(G)
-    if logging_toggle:
-        return G, decimation_log
-    elif sparsify_mode:
-        return G, sparsify_log
-    elif neil_mode:
-        return G, decimated_sites
-    return G
-
-
-def test5():
-    G1 = generate_square_lattice(64, 64)
-    
-    G2 = copy_graph(G1)
-    G3 = copy_graph(G1)
-    
-    
-    t0 = time.time_ns()
-    sparsify_log = [""]
-    for i in range(G1.numberOfNodes()):
-        #t0 = time.time_ns()
-        G1, sparsify_log = numba_sdrg_step(G1, logging_toggle = True, decimation_log=sparsify_log, visualizeStep=False)
-        #t1 = time.time_ns()
-        if i % 250 == 0:
-            print(f"step {i}/{G1.numberOfNodes()}")
-    t1 = time.time_ns()
-    print(f" -------- no_py numba took: {(t1-t0)/1000000000}")
-
-    t0 = time.time_ns()
-    sparsify_log = []
-    for i in range(G2.numberOfNodes()):
-        #t0 = time.time_ns()
-        G2, sparsify_log = numba_py_sdrg_step(G2, logging_toggle = True, decimation_log=sparsify_log, visualizeStep=False)
-        #t1 = time.time_ns()
-        if i % 250 == 0:
-            print(f"step {i}/{G2.numberOfNodes()}")
-    t1 = time.time_ns()
-    print(f" -------- py numba took: {(t1-t0)/1000000000}")
-    
-    t0 = time.time_ns()
-    sparsify_log = []
-    for i in range(G3.numberOfNodes()):
-        #t0 = time.time_ns()
-        G3, sparsify_log = no_numba_sdrg_step(G3, logging_toggle = True, decimation_log=sparsify_log, visualizeStep=False)
-        #t1 = time.time_ns()
-        if i % 250 == 0:
-            print(f"step {i}/{G3.numberOfNodes()}")
-    t1 = time.time_ns()
-    print(f" -------- standard took: {(t1-t0)/1000000000}")
-    
-
 
 ######### EDGE SDRG
 
-def sdrg_to_completion(G, visualizeSteps = False, verbose=False):
+def sdrg_to_completion(G, visualizeSteps = False, verbose=False, kawashima = True):
     sparsify_log = []
     if not verbose:
         orig_n_nodes = G.numberOfNodes()
         for i in range(G.numberOfNodes()):
             #t0 = time.time_ns()
-            G, sparsify_log = sdrg_step(G, logging_toggle = True, decimation_log=sparsify_log, visualizeStep=visualizeSteps)
+            G, sparsify_log = sdrg_step(G, logging_toggle = False, sparsify_mode=True, sparsify_log=sparsify_log, visualizeStep=visualizeSteps, kawashima_filtering=kawashima)
             #t1 = time.time_ns()
-            if i % 250 == 0:
-                print(f"step {i}/{orig_n_nodes}")
+            #print(sparsify_log)
+            if i % 25 == 0:
+                
+                print(f"step {i}/{orig_n_nodes}; edge # is {G.numberOfEdges()}")
         #print(decimated_sites)
         
         print("--------------------------")
-            
+        #print(sparsify_log)
         return G, sparsify_log
     else:
         for i in range(G.numberOfNodes()):
@@ -2109,39 +1685,44 @@ def sdrg_to_completion(G, visualizeSteps = False, verbose=False):
         return G, sparsify_log
 
 
-def sdrg_partial(G, percent_to_sparsify, visualizeSteps = False, verbose=False, keep_connected = False):
+def sdrg_partial(G, visualizeSteps = False, verbose=False, keep_connected = True):
     sparsify_log = []
-    num_steps = int(G.numberOfNodes() * percent_to_sparsify)
-    if not verbose:
-
-        for i in range(num_steps):
-            #t0 = time.time_ns()
-            G, sparsify_log = sdrg_step(G, logging_toggle = True, decimation_log=sparsify_log, visualizeStep=visualizeSteps, keep_connected=keep_connected)
-            #t1 = time.time_ns()
-            if i % 250 == 0:
-                print(f"step {i}/{num_steps}")
-        #print(decimated_sites)
+    partial_set=set()
+    keep_connected_set=set()
+    num_nodes_originally = G.numberOfNodes()
+    for i in range(G.numberOfNodes()):
+        #t0 = time.time_ns()
+        G, sparsify_log, partial_set, keep_connected_set = sdrg_step(
+            G, 
+            logging_toggle = False, 
+            sparsify_mode=True, 
+            sparsify_log=sparsify_log, 
+            partial_set=partial_set, 
+            visualizeStep=False, 
+            keep_connected=keep_connected, 
+            keep_connected_set=keep_connected_set, 
+            partial=True, 
+            kawashima_filtering=False, 
+            step=0
+            )
         
-        print("--------------------------")
-            
-        return G, sparsify_log
-    else:
-        for i in range(num_steps):
-            G, sparsify_log = sdrg_step_verbose(G, decimation_log=sparsify_log, visualizeStep=visualizeSteps)
-        #print(decimated_sites)
+        #t1 = time.time_ns()
+        if i % 25 == 0:
+            print(f"step {i}/{num_nodes_originally}; completeness is {completeness(G)*100}%")
+    #print(decimated_sites)
+    
+    print("--------------------------")
         
-        print("--------------------------")
-            
-        return G, sparsify_log
+    return G, sparsify_log, partial_set, keep_connected_set
 
 
 
-def sdrg_sparsify(G):
+def sdrg_sparsify(G, use_kawashima = True):
     G_tilde_1 = copy_graph(G)
     G_tilde_2 = copy_graph(G)
     mu_components = G_tilde_1.getNodeAttribute("mu_comp", str)
     print("running sdrg")
-    G_tilde_1, sparsify_log = sdrg_to_completion(G_tilde_1)
+    G_tilde_1, sparsify_log = sdrg_to_completion(G_tilde_1, kawashima=use_kawashima)
     print("finished sdrg; building sparsified network")
     edges_to_include = []
     for node_id in G_tilde_1.iterNodes(): #we don't know the index of the last node, so this directly gets us the object
@@ -2154,19 +1735,25 @@ def sdrg_sparsify(G):
     #list_of_decimated_site_components = []
     #print(sparsify_log)
     for site_component in sparsify_log:
-        #print(site_component)
+        component_list = site_component.split("_")
+        #print(component_list)
         #clean_component = eval(site_component[1:]) if site_component[0] == 'n' else site_component
         #components = site_components.split("_")
-        if site_component[0] != 'n':
-            edges_to_include.append(site_component)
+        for component in component_list:
+            if component[0] != 'n':
+                edges_to_include.append(eval(component[1:]))
         #list_of_decimated_site_components.append(clean_component)
         
     """for thing in list_of_decimated_site_components:
         if thing[0] == 'e':
             edges_to_include.append(eval(thing[1:]))"""
-            
+    
+    #print(edges_to_include)
+    
     edges_to_include_set = set(edges_to_include)
+    #print(edges_to_include_set)
     all_edges_set = set([edge for edge in G_tilde_2.iterEdges()])
+    #print(all_edges_set)
     edges_to_remove = all_edges_set - edges_to_include_set
     #instead run sdrg to some energy scale then remove all edges from the decimation log?
     #print(decimation_log)
@@ -2184,51 +1771,141 @@ def sdrg_sparsify(G):
     return G_tilde_2
 
 
-def sdrg_sparsify_partial(G, percent_to_sparsify):
+def sdrg_sparsify_partial(G, percent_to_keep, keep_network_connected):
     G_tilde_1 = copy_graph(G)
     G_tilde_2 = copy_graph(G)
+    G_tilde_3 = copy_graph(G)
+
     mu_components = G_tilde_1.getNodeAttribute("mu_comp", str)
     print("running sdrg")
-    G_tilde_1, sparsify_log = sdrg_partial(G_tilde_1, percent_to_sparsify, keep_connected=True)
+    
+    t0 = time.time_ns()
+    G_tilde_1, sparsify_log, partial_set, keep_connected_set = sdrg_partial(G_tilde_1, keep_connected=keep_network_connected)
+    t1 = time.time_ns()
+    print((t1-t0)/1000000000)
     print("finished sdrg; building sparsified network")
     edges_to_include = []
     for node_id in G_tilde_1.iterNodes(): #we don't know the index of the last node, so this directly gets us the object
         list_of_components = mu_components[node_id].split("_")
-        #print(list_of_components)
+        print(node_id)
+        print(list_of_components)
         for thing in list_of_components:
             if thing[0] == 'e':
                 edges_to_include.append(eval(thing[1:]))
                 
     #list_of_decimated_site_components = []
     #print(sparsify_log)
+    print("----")
     for site_component in sparsify_log:
+        
         #print(site_component)
+        component_list = site_component.split("_")
+        #print(component_list)
         #clean_component = eval(site_component[1:]) if site_component[0] == 'n' else site_component
         #components = site_components.split("_")
-        if site_component[0] != 'n':
-            edges_to_include.append(site_component)
+        for component in component_list:
+            if component[0] != 'n':
+                edges_to_include.append(eval(component[1:]))
+        
         #list_of_decimated_site_components.append(clean_component)
         
     """for thing in list_of_decimated_site_components:
         if thing[0] == 'e':
             edges_to_include.append(eval(thing[1:]))"""
-            
+    #print(sorted(edges_to_include))
     edges_to_include_set = set(edges_to_include)
     all_edges_set = set([edge for edge in G_tilde_2.iterEdges()])
-    edges_to_remove = all_edges_set - edges_to_include_set
+    
     #instead run sdrg to some energy scale then remove all edges from the decimation log?
     #print(decimation_log)
     #no_duplicate_decimation_log = list(dict.fromkeys(decimation_log))
     #print(edges_to_include_set)
+    t0 = time.time_ns()
+    
+    print("built sparse backbone; now adding partial edges")
+    
+    print(len(partial_set))
+    #first prune the edges which are already included
+    already_included_edges = set()
+    edges_to_be_readded = set()
+    for triplet in partial_set:
+        # triplet for the edge between u and v is: ((u,v), omega_edge_uv_got_decimated_at, weight_of_edge_uv)
+        if triplet[0] in edges_to_include_set:
+            already_included_edges.add(triplet)
+            #print(triplet)
+        else:
+            #print(tuple(sorted(triplet[0])))
+            #print(sorted(triplet[0]))
+            edges_to_be_readded.add(tuple(sorted(triplet[0])))
+    for triplet in already_included_edges:
+        partial_set.remove(triplet)
+    print(len(partial_set))
+    print(f"The SDRG backbone has {len(edges_to_include_set)}edges")
+    print(len(edges_to_be_readded))
+        
+    #now, partial_set has all of the edges which got removed, but with some being duplicated at multiple energy levels
+    #to fix this, we search through and find the lowest energy scale that each got removed at
+    
+    for edge in edges_to_be_readded:
+        all_instances_of_edge = sorted([triplet for triplet in partial_set if triplet[0] == edge], key=lambda x: (x[1], x[2]))
+        if len(all_instances_of_edge) > 1:
+            for instance in all_instances_of_edge[1:]:
+                partial_set.remove(instance)
+    
+    partial_edges_sorted = sorted([triplet for triplet in partial_set], key=lambda x: (x[1], x[2]))
+    
+    for i in range(round(len(partial_edges_sorted)*percent_to_keep)):
+        edges_to_include_set.add(partial_edges_sorted[i][0])
+    
+    
+    
     print(f"at end we'll have  {len(edges_to_include_set)} edges")
+    
+    edges_to_remove = all_edges_set - edges_to_include_set    
     for edge in edges_to_remove:
     
         #edge = no_duplicate_decimation_log[i]
         
         #print(f"removed {edge[0]}, {edge[1]} with weight {G_tilde_2.weight(edge[0], edge[1])}")
     
-        G_tilde_2.removeEdge(int(edge[0]), int(edge[1]))
-    print("done")
+        G_tilde_2.removeEdge(int(edge[0]), int(edge[1]))    
+    
+    if keep_network_connected:
+        print("Construction completed; now adding in connections to keep network fully connected")
+        cc = nk.components.ConnectedComponents(G_tilde_2)
+        cc.run()
+        print(f"{len(cc.getComponentSizes())} components: {cc.getComponents()}")
+        #print(max(cc.getComponentSizes().values()))
+        components_list = sorted(cc.getComponents(), key=lambda x: len(x), reverse=True)
+        print("-")
+        components_list = components_list[1:]
+        minimum_required_connection_edges = set()
+        for component in components_list:
+            for site in component:
+                required_edges = {edge for edge in keep_connected_set if site in edge}
+                for edge in required_edges:
+                    edges_to_include_set.add(edge)
+                    
+        
+        print(components_list)
+        
+        edges_to_remove = all_edges_set - edges_to_include_set    
+        for edge in edges_to_remove:
+        
+            #edge = no_duplicate_decimation_log[i]
+            
+            #print(f"removed {edge[0]}, {edge[1]} with weight {G_tilde_2.weight(edge[0], edge[1])}")
+        
+            G_tilde_3.removeEdge(int(edge[0]), int(edge[1]))    
+    
+        t1 = time.time_ns()
+        print(len(partial_set))
+        print((t1-t0)/1000000000)
+        return G_tilde_3
+    
+    t1 = time.time_ns()
+    print(len(partial_set))
+    print((t1-t0)/1000000000)
     return G_tilde_2
        
 
@@ -4464,18 +4141,22 @@ def sparsified_DCP_fast_memsafe_s(G, track_TOA=False, quasistationary = True, t_
     else:
         return transition_times
 
-def sparsified_DCP_fast_memsafe(G, track_TOA=False, quasistationary = True, t_max = 1, random_start = True, start_node = 0, original_graph_size = 100):
+def sparsified_DCP_fast_memsafe(G, track_TOA=False, quasistationary = True, t_max = 1, random_start = True, start_node = 0, original_graph_size = 100, return_density_set = False):
 
     patient_zero = 0
     healing_factor = G.getNodeAttribute("mu", float)
     is_active = G.getNodeAttribute("active", int)
     components = G.getNodeAttribute("components", str)
     nodes = list(G.iterNodes())
+    
+    N = G.numberOfNodes()
+    
     active_nodes = set([u for u in G.iterNodes() if is_active[u] == 1])
     
     transition_times = {site : [0, 0, 0, False] for site in range(original_graph_size)}
     #          t_active, t_inactive, t_lastTransition, False=last transition was active->inactive
 
+    
     if random_start and len(active_nodes) == 0:
         found_patient_zero_in_largest_component = False
         
@@ -4537,7 +4218,7 @@ def sparsified_DCP_fast_memsafe(G, track_TOA=False, quasistationary = True, t_ma
         for component in c:
             transition_times[int(component)] = [0, 0, 0, True]
     
-    step_counter = 0 #used just to draw updates every once in a while
+    step_counter = 0
     TOA_tracker = set()
     
     if track_TOA:
@@ -4591,11 +4272,18 @@ def sparsified_DCP_fast_memsafe(G, track_TOA=False, quasistationary = True, t_ma
         all_exposed_sites.append(list(G.iterNeighbors(site)))
         all_neighbor_edge_weights.append([u[1] for u in G.iterNeighborsWeights(site)])
         all_lambda_i.append(sum(all_neighbor_edge_weights[site]))
+    #print(Q)
+    
+    #these can be any value technically, as they get multiplied by zero in the zero-th step
+    density_ev = 0
+    density_sq_ev = 0
+    #list = np.zeros(round(t_max*Q*N)*2) #this set stores the density at every timestep for maximum of susceptibility calculations
 
+    
     while t < t_max:
         #t0=time.time_ns()
-        
         N_active = len(active_nodes)
+        
         #print(N_active)
         # the number of exposed nodes is the same as the number of edges connected to active sites
         #N_exposed = len(exposed_edges)
@@ -4606,6 +4294,18 @@ def sparsified_DCP_fast_memsafe(G, track_TOA=False, quasistationary = True, t_ma
         #print(active_nodes)
         #TODO Maybe change this so that we have an absolute maximum (across whole network) that we can use? Then no need to recompute and we get rid of this expensive check
         
+        if return_density_set:
+            #get the current density of active sites, rho
+            rho = N_active/N
+            
+            #update the running averages (expected values) of rho and rho squared with this method
+            density_ev = ((density_ev*step_counter) + rho)/(step_counter+1)
+            density_sq_ev = ((density_sq_ev*step_counter) + (rho**2))/(step_counter+1)
+            """try:
+                density_list[step_counter] = N_active/N
+            except:
+                print(f"t={t} out of {t_max} | step = {step_counter} length = {len(density_list)}")"""
+            #density_set.add(N_active/N)
 
         #print(lambda_max)        
 
@@ -4683,7 +4383,7 @@ def sparsified_DCP_fast_memsafe(G, track_TOA=False, quasistationary = True, t_ma
                             transition_times[int(site)][3] = True
                             #df = swap_column_vals_after_k(df, site_index, df_col)
                         
-                        
+                    #N_active += 1
                     deltaT = 1/(Q*(N_active+1))
                     #t += deltaT
             
@@ -4728,7 +4428,7 @@ def sparsified_DCP_fast_memsafe(G, track_TOA=False, quasistationary = True, t_ma
                     #df = swap_column_vals_after_k(df, site_index, df_col)
                 #= active_nodes[active_nodes!=site_to_heal]
                 #print(f"healed site {active_nodes[site_to_heal]}")
-                
+                #N_active -= 1
                 deltaT = 1/(Q*(N_active-1))
                 #t += deltaT
                 #t5=time.time_ns()
@@ -4765,12 +4465,17 @@ def sparsified_DCP_fast_memsafe(G, track_TOA=False, quasistationary = True, t_ma
             pass
             #print(f"t={t} --- {N_active} nodes are active")
             #visualize(G, active_nodes=active_nodes)
+            
+        
         
 
         
     print(f"{N_active} nodes are active at t={t} after {step_counter} steps. The last timestep was {deltaT}")
     if track_TOA:
         return TOA_tracker
+    elif return_density_set:
+        #density_list = np.trim_zeros(density_list)
+        return transition_times, (density_ev, density_sq_ev)
     else:
         return transition_times
 
@@ -5575,8 +5280,7 @@ def asymptotic_quasistationary_activity_probability(G, G_structure="chain"):
     data = get_DCP_data_asymptotic(G, relaxation_time, G.numberOfNodes())
     
     matrix = np.matrix(data.to_numpy())
-    
-    #print(matrix.shape)
+        #print(matrix.shape)
 
     proportions_of_time_active_listform = matrix.sum(axis=1)
     proportions_of_time_active = [u[0,0] for u in proportions_of_time_active_listform]
@@ -5879,7 +5583,59 @@ def fast_dcp_until_quasistationary(G, init_time = 2**6, t_max=10000000, G_struct
         print(" ------- ")
 
 
-def fast_dcp_until_quasistationary_memsafe(G, init_time = 2**6, t_max=10000000, G_structure="chain", original_graph_size=100, dimensions = [1, 1], viz=True, title="", spearman_thresh = 0.99):
+def fast_dcp_until_quasistationary_memsafe(G, init_time = 2**3, t_max=10000000, G_structure="chain", original_graph_size=100, dimensions = [1, 1], viz=True, title="", spearman_thresh = 0.99, return_density_set=False, print_stats = True):
+    #init time should be a power of 2
+    # it doesn't actually have to be but it should be just b/c that makes nice and intuitive doubling numbers
+    # t_max should be really really big; on order of 10 million for a cycle of length L=32
+    print("starting")
+    reset_to_distributed_infection(G, 1)
+    #d_init = sparsified_DCP_fast(G, t_max=1, original_graph_size=original_graph_size)
+    #vis_lat_advanced(d_init, original_graph_size, 1, G_structure, dimensions, f"initial state for " + title)
+    #run relaxation at the start 
+    sparsified_DCP_fast_memsafe(G, t_max=init_time, original_graph_size=original_graph_size)
+    #data0 = sparsified_DCP_fast(G, t_max=init_time, original_graph_size=original_graph_size)
+    t0=time.time_ns()
+    in_quasistationary = False
+    t_i = init_time
+    data_first_half = sparsified_DCP_fast_memsafe(G, t_max=t_i, original_graph_size=original_graph_size)
+    while not in_quasistationary:
+        #data0 = sparsified_DCP_fast(G, t_max=t_i, original_graph_size=original_graph_size)
+        data_second_half, density_tuples = sparsified_DCP_fast_memsafe(G, t_max=t_i, original_graph_size=original_graph_size, return_density_set=return_density_set)
+        
+        spearman_compare_pval, lin_reg_r_squared, spearman_rho = spearman_compare_memsafe(data_first_half, data_second_half, original_graph_size, t_i, title=title + f", t_i={t_i} scatter plot", verbose = print_stats)
+        
+        if spearman_compare_pval < 0.05 and spearman_rho > spearman_thresh:# and lin_reg_r_squared > 0.9:
+            print("found quasistationary state")
+            if viz:
+                vis_lat_advanced_memsafe(data_first_half, original_graph_size, t_i, G_structure, dimensions, title)
+                vis_lat_advanced_memsafe(data_second_half, original_graph_size, t_i, G_structure, dimensions, title)
+            
+            in_quasistationary = True
+            if not return_density_set:
+                return data_second_half
+            else: 
+                return data_second_half, density_tuples
+        else:
+            t = time.time_ns()
+            print(f"Quasistationary state not yet reached with rho = {spearman_rho}. Doubling to t_i = {2*t_i}. ")
+            if viz:
+                vis_lat_advanced_memsafe(data_first_half, original_graph_size, t_i, G_structure, dimensions, title + f", t_i={t_i}, 1st half")
+                vis_lat_advanced_memsafe(data_second_half, original_graph_size, t_i, G_structure, dimensions, title + f", t_i={t_i}, 2nd half")
+            time_so_far = (t-t0)/1000000000 # in secconds
+            next_t_hrs = time_so_far // 3600
+            next_t_mins = (time_so_far-(next_t_hrs*3600)) // 60
+            next_t_secs = (time_so_far - (next_t_hrs*3600) - (next_t_mins*60)) 
+            
+            print(f"Simulation has taken {time_so_far} seconds; next will end in roughly {next_t_hrs}hrs : {next_t_mins}m : {next_t_secs}s. Time is {time.localtime().tm_hour} : {time.localtime().tm_min} : {time.localtime().tm_sec} --- next step done at {time.localtime().tm_hour + next_t_hrs} : {time.localtime().tm_min + next_t_mins} : {time.localtime().tm_sec + next_t_secs}")
+            data_first_half = collate_fast_dcp_memsafe_data(data_first_half, data_second_half)
+            #print("data collated")
+            #print(f"time is {time.localtime().tm_hour} : {time.localtime().tm_min} : {time.localtime().tm_sec} --- next step finishes at {time.localtime().tm_hour + next_t_hrs} : {time.localtime().tm_min + next_t_mins} : {time.localtime().tm_sec + next_t_secs}")
+            t_i *= 2
+        print(" ------- ")
+
+
+
+def fast_memsafe_quasistationary_density(G, init_time = 2**6, t_max=10000000, G_structure="lattice", original_graph_size=100, dimensions = [1, 1], viz=False, title="", density_thresh = 0.01):
     #init time should be a power of 2
     # it doesn't actually have to be but it should be just b/c that makes nice and intuitive doubling numbers
     # t_max should be really really big; on order of 10 million for a cycle of length L=32
@@ -5898,19 +5654,18 @@ def fast_dcp_until_quasistationary_memsafe(G, init_time = 2**6, t_max=10000000, 
         #data0 = sparsified_DCP_fast(G, t_max=t_i, original_graph_size=original_graph_size)
         data_second_half = sparsified_DCP_fast_memsafe(G, t_max=t_i, original_graph_size=original_graph_size)
         
-        spearman_compare_pval, lin_reg_r_squared, spearman_rho = spearman_compare_memsafe(data_first_half, data_second_half, original_graph_size, t_i, title=title + f", t_i={t_i} scatter plot")
-        
-        if spearman_compare_pval < 0.05 and spearman_rho > spearman_thresh:# and lin_reg_r_squared > 0.9:
+        first_half_density, second_half_density = density_compare_memsafe(data_first_half, data_second_half)
+        if abs(first_half_density - second_half_density) < density_thresh:# and lin_reg_r_squared > 0.9:
             print("found quasistationary state")
             if viz:
                 vis_lat_advanced_memsafe(data_first_half, original_graph_size, t_i, G_structure, dimensions, title)
                 vis_lat_advanced_memsafe(data_second_half, original_graph_size, t_i, G_structure, dimensions, title)
             
             in_quasistationary = True
-            return data_second_half
+            return second_half_density
         else:
             t = time.time_ns()
-            print(f"Quasistationary state not yet reached with p = {spearman_compare_pval}. Doubling to t_i = {2*t_i}")
+            print(f"Quasistationary state not yet reached with delta density = {abs(first_half_density - second_half_density)}. Doubling to t_i = {2*t_i}")
             if viz:
                 vis_lat_advanced_memsafe(data_first_half, original_graph_size, t_i, G_structure, dimensions, title + f", t_i={t_i}, 1st half")
                 vis_lat_advanced_memsafe(data_second_half, original_graph_size, t_i, G_structure, dimensions, title + f", t_i={t_i}, 2nd half")
@@ -6171,7 +5926,7 @@ def spearman_compare(orig_data, mod_data, original_graph_size, relaxation_time):
 
 
 
-def spearman_compare_memsafe(orig_data, mod_data, original_graph_size, relaxation_time, title = ""):
+def spearman_compare_memsafe(orig_data, mod_data, original_graph_size, relaxation_time, title = "", verbose=True):
     #get prop_time_active_orig
     #data_arr = [orig_data, mod_data]
     #prop_times_active = np.empty(2)
@@ -6213,7 +5968,8 @@ def spearman_compare_memsafe(orig_data, mod_data, original_graph_size, relaxatio
     
     wasserstein_dist = scipy.stats.wasserstein_distance(sorted_prop_time_active_o, prop_mod_sorted)
     linr = scipy.stats.linregress(sorted_prop_time_active_o, prop_mod_sorted)
-    print(f"{linr.slope}, {linr.intercept}, {linr.pvalue}, {linr.stderr}, {linr.intercept_stderr}")
+    if verbose:
+        print(f"{linr.slope}, {linr.intercept}, {linr.pvalue}, {linr.stderr}, {linr.intercept_stderr}")
     #print(prop_orig[0:25])
     #print(a[0:25])
     #x = np.random.rand(len(prop_mod))
@@ -6223,11 +5979,12 @@ def spearman_compare_memsafe(orig_data, mod_data, original_graph_size, relaxatio
     x=np.linspace(0,1)#max(max(sorted_prop_time_active_o), max(prop_mod_sorted)))
     plt.suptitle(title)
     plt.plot(x, linr.intercept + linr.slope*x, 'r', label='fitted line')
-    print(f"linear regression R^2: {linr.rvalue**2}")
-    print(f"absolute node-by-node activity difference, averaged: {average_activity_comparison}")
-    print(f"spearman rho: {spearman_correlation.statistic}")
-    print(f"spearman p-value: {spearman_correlation.pvalue}")
-    print(f"wasserstein distance: {wasserstein_dist}")
+    if verbose:
+        print(f"linear regression R^2: {linr.rvalue**2}")
+        print(f"absolute node-by-node activity difference, averaged: {average_activity_comparison}")
+        print(f"spearman rho: {spearman_correlation.statistic}")
+        print(f"spearman p-value: {spearman_correlation.pvalue}")
+        print(f"wasserstein distance: {wasserstein_dist}")
     
     return spearman_correlation.pvalue, linr.rvalue**2, spearman_correlation.statistic
 
@@ -6292,6 +6049,37 @@ def spearman_compare_memsafe_diff(orig_data, mod_data, original_graph_size, rela
     
     return spearman_correlation.pvalue, linr.rvalue**2, spearman_correlation.statistic
 
+
+
+def density_compare_memsafe(orig_data, mod_data):
+    #get prop_time_active_orig
+    #data_arr = [orig_data, mod_data]
+    #prop_times_active = np.empty(2)
+            
+    sum_activity_original = 0
+    sum_inactivity_original = 0
+    for site in orig_data:
+
+        sum_activity_original += orig_data[site][0]
+        sum_inactivity_original += orig_data[site][1]
+    
+            
+    sum_activity_mod = 0
+    sum_inactivity_mod = 0
+
+    for site in mod_data:
+        
+        sum_activity_mod += mod_data[site][0]
+        sum_inactivity_mod += mod_data[site][1]
+    
+    orig_density = sum_activity_original/(sum_activity_original+sum_inactivity_original)
+    mod_density = sum_activity_mod/(sum_activity_mod+sum_inactivity_mod)
+
+    return orig_density, mod_density
+
+def get_state_density(G):
+    is_active = G.getNodeAttribute("active", int)
+    return sum([is_active[u] for u in G.iterNodes()])
 
 def quasistationary_compare0():
     G = generate_square_lattice(128, 128)
@@ -6903,6 +6691,7 @@ def get_max_omega(G):
     return omega
 
 def get_list_of_edge_components(G, eid):
+    #edge components stores exclusively tuples of edges which comprise the edge with id = eid
     edge_components = G.getEdgeAttribute("e_comp", str)
     l = edge_components[eid].split("_")
     out = []
@@ -7395,7 +7184,8 @@ def vis_given_clusters(clusters, L, G_structure, title):
         plt.show()
    
  
-    
+def completeness(G):
+    return G.numberOfEdges()/(G.numberOfNodes()**2)
     
 def vis_dcp(active_nodes, dimensions = [1, 1], title = ""):
     #matrix = np.matrix(data.to_numpy())

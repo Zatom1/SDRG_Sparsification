@@ -24,7 +24,7 @@ import pickle
 import matplotlib.colors as mcolors
 from numba import jit
 from math import log as ln
-
+import seaborn as sns
 np.random.seed(1)
 #"C:\Users\zidda\Downloads\inputs_L10_pbcTrue_h0-1.0_j0-1.0_seed1.npz"
     
@@ -190,7 +190,10 @@ def generate_square_lattice(width, height, torus = True, visualize_on=False, dis
         
     return G
 
-
+def gen_with_seed(L, seed):
+    np.random.seed(seed)
+    G = generate_square_lattice(L, L)
+    return G
         
 def generate_complete(n, visualize_on=False, disorder_alpha = 1):
     #Self explanatory
@@ -1166,9 +1169,12 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
                 J_ui = G.weight(u, neighbor)
                 J_vi = G.weight(v, neighbor)
                 
-                if J_ui > 1e-300 or J_vi > 1e-300:
+                if J_ui > 1e-322 or J_vi > 1e-322:
                     #sometimes weird shit happens when an edge has ultra-low weight. We just avoid these edges
-                    if math.abs(J_ui/J_vi) > 2:
+                    ratio = 0
+                    if J_ui > 1e-322 and J_vi > 1e-322:
+                        ratio = abs(J_ui/J_vi)
+                    if ratio > 2:
                         new_edge_weight = max(J_ui, J_vi)
                     else:
                         new_edge_weight = J_ui + J_vi
@@ -1219,8 +1225,10 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
                                 for i in edge_comp_list:
                                     partial_set.add((i, omega, J_ui))
                                 #decimation_log.append((u,neighbor))
-                    elif J_ui + J_vi == new_edge_weight:
-                        pass
+                    elif J_ui + J_vi == new_edge_weight and J_ui != new_edge_weight and J_vi != new_edge_weight:
+                        uneid = G.edgeId(u, neighbor)
+                        vneid = G.edgeId(v, neighbor)
+                        edge_components[eid] = f"{edge_components[uneid]}_{edge_components[vneid]}"
                     else:
                         #If the maximum rule removes nothing; i.e, the "neighbor" node was only connected to one of the u or v nodse, 
                         #G.addEdge(k, neighbor, new_edge_weight)
@@ -1807,20 +1815,36 @@ def sdrg_partial(G, visualizeSteps = False, verbose=False, keep_connected = True
         num_nodes_originally = G.numberOfNodes()
         for i in range(G.numberOfNodes()):
             #t0 = time.time_ns()
-            G, sparsify_log, keep_connected_set = sdrg_step(
-                G, 
-                logging_toggle = False, 
-                sparsify_mode=True, 
-                sparsify_log=sparsify_log, 
-                partial_set=partial_set, 
-                visualizeStep=False, 
-                keep_connected=keep_connected, 
-                keep_connected_set=keep_connected_set, 
-                partial=False, 
-                kawashima_filtering=use_kawashima, 
-                local_maxima_filtering=use_local_max_filtering,
-                step=0
-                )
+            if keep_connected:
+                G, sparsify_log, keep_connected_set = sdrg_step(
+                    G, 
+                    logging_toggle = False, 
+                    sparsify_mode=True, 
+                    sparsify_log=sparsify_log, 
+                    partial_set=partial_set, 
+                    visualizeStep=False, 
+                    keep_connected=keep_connected, 
+                    keep_connected_set=keep_connected_set, 
+                    partial=False, 
+                    kawashima_filtering=use_kawashima, 
+                    local_maxima_filtering=use_local_max_filtering,
+                    step=0
+                    )
+            else:
+                G, sparsify_log = sdrg_step(
+                    G, 
+                    logging_toggle = False, 
+                    sparsify_mode=True, 
+                    sparsify_log=sparsify_log, 
+                    partial_set=partial_set, 
+                    visualizeStep=False, 
+                    keep_connected=keep_connected, 
+                    keep_connected_set=keep_connected_set, 
+                    partial=False, 
+                    kawashima_filtering=use_kawashima, 
+                    local_maxima_filtering=use_local_max_filtering,
+                    step=0
+                    )
             
             #t1 = time.time_ns()
             if i % 25 == 0:
@@ -1922,20 +1946,20 @@ def sdrg_sparsify_partial(G, percent_to_keep, keep_network_connected, kawashima=
     else:
         G_tilde_1, sparsify_log, keep_connected_set = sdrg_partial(G_tilde_1, keep_connected=keep_network_connected, use_kawashima=kawashima, use_local_max_filtering=local_max, fully_sparse=True)
     t1 = time.time_ns()
-    print((t1-t0)/1000000000)
-    print("finished sdrg; building sparsified network")
+    #print((t1-t0)/1000000000)
+    #print("finished sdrg; building sparsified network")
     edges_to_include = []
     for node_id in G_tilde_1.iterNodes(): #we don't know the index of the last node, so this directly gets us the object
         list_of_components = mu_components[node_id].split("_")
-        print(node_id)
-        print(list_of_components)
+        #print(node_id)
+        #print(list_of_components)
         for thing in list_of_components:
             if thing[0] == 'e':
                 edges_to_include.append(eval(thing[1:]))
                 
     #list_of_decimated_site_components = []
     #print(sparsify_log)
-    print("----")
+    #print("----")
     for site_component in sparsify_log:
         
         #print(site_component)
@@ -2060,10 +2084,10 @@ def sdrg_sparsify_partial(G, percent_to_keep, keep_network_connected, kawashima=
         if use_multiplicity:
             edge_multiplicity_dict[edge] = num_instances_of_edge
             
-    if use_multiplicity:
-        print("---max & min multiplicity---")
-        print(max(edge_multiplicity_dict.values()))
-        print(min(edge_multiplicity_dict.values()))
+    #if use_multiplicity:
+        #print("---max & min multiplicity---")
+        #print(max(edge_multiplicity_dict.values()))
+        #print(min(edge_multiplicity_dict.values()))
         #multipliers = np.linspace(0.5, 2, G_tilde_3.numberOfEdges())
         
     #we reverse so that the edges which lasted the *least* amount of time (i.e, were fully decimated at the *highest* energy scale) are readded first
@@ -2097,7 +2121,7 @@ def sdrg_sparsify_partial(G, percent_to_keep, keep_network_connected, kawashima=
         
         #format them into a nice list so that we can easily search through
         components_list = sorted(cc.getComponents(), key=lambda x: len(x), reverse=True)
-        print("-")
+        #print("-")
         components_list = components_list[1:]
         #minimum_required_connection_edges = set()
         for component in components_list:
@@ -2172,7 +2196,7 @@ def sdrg_sparsify_partial(G, percent_to_keep, keep_network_connected, kawashima=
             
             #format them into a nice list so that we can easily search through
             components_list = sorted(cc.getComponents(), key=lambda x: len(x), reverse=True)
-            print("-")
+            #print("-")
             components_list = components_list[1:]
             #minimum_required_connection_edges = set()
             for component in components_list:
@@ -2200,8 +2224,8 @@ def sdrg_sparsify_partial(G, percent_to_keep, keep_network_connected, kawashima=
             if use_multiplicity:
                 max_mult = max(edge_multiplicity_dict.values())
                 min_mult = min(edge_multiplicity_dict.values())
-                print(max_mult)
-                print(min_mult)
+                #print(max_mult)
+                #print(min_mult)
                 for edge in G_tilde_3.iterEdges():
                     multiplier = ((edge_multiplicity_dict[edge] - min_mult)/(max_mult - min_mult))+0.5 #outputs number between 0.5 and 1.5 to multiply by
                     G_tilde_3.setWeight(edge[0], edge[1], G_tilde_3.weight(edge[0], edge[1]) * multiplier)
@@ -2214,8 +2238,8 @@ def sdrg_sparsify_partial(G, percent_to_keep, keep_network_connected, kawashima=
         if use_multiplicity:
             max_mult = max(edge_multiplicity_dict.values())
             min_mult = min(edge_multiplicity_dict.values())
-            print(max_mult)
-            print(min_mult)
+            #print(max_mult)
+            #print(min_mult)
             for edge in G_tilde_2.iterEdges():
                 multiplier = ((edge_multiplicity_dict[edge] - min_mult)/(max_mult - min_mult))+0.5 #outputs number between 0.5 and 1.5 to multiply by
                 G_tilde_2.setWeight(edge[0], edge[1], G_tilde_2.weight(edge[0], edge[1]) * multiplier)
@@ -2254,10 +2278,10 @@ def sdrg_sparsify_partial(G, percent_to_keep, keep_network_connected, kawashima=
                 print("Construction completed; now adding in connections to keep network fully connected")
                 cc = nk.components.ConnectedComponents(G_tilde_2)
                 cc.run()
-                print(f"{len(cc.getComponentSizes())} components: {cc.getComponents()}")
+                #print(f"{len(cc.getComponentSizes())} components: {cc.getComponents()}")
                 #print(max(cc.getComponentSizes().values()))
                 components_list = sorted(cc.getComponents(), key=lambda x: len(x), reverse=True)
-                print("-")
+                #print("-")
                 components_list = components_list[1:]
                 #minimum_required_connection_edges = set()
                 for component in components_list:
@@ -2286,16 +2310,16 @@ def sdrg_sparsify_partial(G, percent_to_keep, keep_network_connected, kawashima=
                 if use_multiplicity:
                     max_mult = max(edge_multiplicity_dict.values())
                     min_mult = min(edge_multiplicity_dict.values())
-                    print(max_mult)
-                    print(min_mult)
+                    #print(max_mult)
+                    #print(min_mult)
                     for edge in G_tilde_3.iterEdges():
                         multiplier = ((edge_multiplicity_dict[edge] - min_mult)/(max_mult - min_mult))+0.5 #outputs number between 0.5 and 1.5 to multiply by
                         G_tilde_3.setWeight(edge[0], edge[1], G_tilde_3.weight(edge[0], edge[1]) * multiplier)
 
                 
                 t1 = time.time_ns()
-                print(len(partial_set))
-                print((t1-t0)/1000000000)
+                #print(len(partial_set))
+                #print((t1-t0)/1000000000)
                 list_of_sparsified_networks.append(G_tilde_3)
                 #return G_tilde_3
             else:
@@ -2303,15 +2327,15 @@ def sdrg_sparsify_partial(G, percent_to_keep, keep_network_connected, kawashima=
                 if use_multiplicity:
                     max_mult = max(edge_multiplicity_dict.values())
                     min_mult = min(edge_multiplicity_dict.values())
-                    print(max_mult)
-                    print(min_mult)
+                    #print(max_mult)
+                    #print(min_mult)
                     for edge in G_tilde_2.iterEdges():
                         multiplier = ((edge_multiplicity_dict[edge] - min_mult)/(max_mult - min_mult))+0.5 #outputs number between 0.5 and 1.5 to multiply by
                         G_tilde_2.setWeight(edge[0], edge[1], G_tilde_2.weight(edge[0], edge[1]) * multiplier)
 
                 
                 t1 = time.time_ns()
-                print(len(partial_set))
+                #print(len(partial_set))
                 print((t1-t0)/1000000000)
                 list_of_sparsified_networks.append(G_tilde_2)
                 #return G_tilde_2
@@ -2342,7 +2366,97 @@ def sdrg_sparsify_n_edges(G, n_edges):
     print("done with sdrg sparsification")
     return G_tilde_2
     
-
+def shortest_tree_sdrg(G_in, target_edge_count):
+    """
+    This method uses a sort of combination of SMDS and SDRG, where instead of 
+    keeping ALL shortest paths like in the SMDS backbone, we keep only the 
+    shortest paths which lead to a site in one of the largest clusters 
+    identified by SDRG. I figured out that this might be a good idea after 
+    looking at a quasistationary graph and realizing that probability seemed to 
+    emanate out from the sites in the largest 3 clusters as if they were 
+    "generators" of activity
+    
+    
+    """
+    G = copy_graph(G_in)
+    G_dists = copy_graph(G)
+    
+    k = 3
+    n_edges = 0
+    
+    num_clusters = get_num_clusters(G)
+    
+    while n_edges < target_edge_count:
+        #n = G.numberOfNodes()
+        
+        k_cluster_sites = get_nodes_of_largest_k_clusters(G, k)
+        set_of_k_cluster_sites = set(k_cluster_sites)
+        all_sites = set([site for site in G.iterNodes()])
+        
+        non_cluster_sites = all_sites-set_of_k_cluster_sites
+        
+        #D = np.ones((n, n))*np.inf
+        
+        #B_matrix = np.zeros((n, n))
+        for edge in G.iterEdges():
+            d = (1/G.weight(edge[0], edge[1]))-1
+            G_dists.setWeight(edge[0], edge[1], d)
+            
+            #print(f"adding {d} to {edge[0]}, {edge[1]} in D")
+            #D[edge[0], edge[1]] = d
+        
+        #all pairs shortest path = APSP    
+        APSP_solver = nk.distance.APSP(G_dists)
+        APSP_solver.run()
+        DTm = APSP_solver.getDistances(asarray=True)
+        #print(DTm)
+        #print(k_cluster_sites)
+        sdrg_backbone = sdrg_sparsify_partial(G, 0, False, local_max=False)
+        #visualize(sdrg_backbone)
+        edges_to_keep = set([edge for edge in sdrg_backbone.iterEdges()])
+        #print(edges_to_keep)
+        
+        for site in non_cluster_sites:
+            dist_to_each_cluster_site = []
+            for cluster_site in k_cluster_sites:
+                dist_to_each_cluster_site.append(DTm[site][cluster_site]) #DTm is symmetric so row and column are interchangeable
+            
+            #this then gets us the site in the top k clusters which is closest to our non-cluster site
+            nearest_cluster_site = k_cluster_sites[np.argmin(dist_to_each_cluster_site)]
+            
+            shortest_path_finder = nk.distance.Dijkstra(G, source=site, target=nearest_cluster_site, storePaths=True)
+            shortest_path_finder.run()
+            #nk.distance.Dijkstra(G, site, target=nearest_cluster_site).getPath()
+            shortest_path_to_cluster = shortest_path_finder.getPath(nearest_cluster_site)
+            #print("----")
+            #print(f"going from: {site} -> {nearest_cluster_site}")
+            #print(shortest_path_to_cluster)
+            for i in range(len(shortest_path_to_cluster)-1):
+                #add the whole path to the list of edges to keep
+                #we sort this to ensure that edges don't get double added in opposite orders
+                edge = tuple(sorted([shortest_path_to_cluster[i], shortest_path_to_cluster[i+1]]))
+                edges_to_keep.add(edge)
+        
+        all_edges_set = set([edge for edge in G.iterEdges()])
+        edges_to_remove = all_edges_set - edges_to_keep
+        #print(edges_to_keep)
+        #print(edges_to_remove)
+        for edge in edges_to_remove:
+            G.removeEdge(edge[0], edge[1])
+            #print(f"removed edge from {edge[0]} to {edge[1]}")
+        #visualize(G)
+        if G.numberOfEdges() < target_edge_count and k < num_clusters/2:
+            print("-------------------------------=============")
+            print(G.numberOfEdges())
+            print(k)
+            
+            k+=1
+            
+        else:
+            print(f"FINISHED SHORTEST PATH AT K={k}")
+            return G
+    
+    
 
 ######### CLUSTERING SDRG
 
@@ -3313,8 +3427,20 @@ def get_neil_output(G_in, verbose = True, lm=False):
     else:
         return formatted_decimated_sites
     
+def get_nodes_of_largest_k_clusters(G_in, k):
+    clusters = get_neil_output(G_in, verbose=False)
+    sorted_clusters = sorted(clusters, key=lambda x: len(x), reverse=True)
+    nodes_to_output = []
+    for i in range(k):
+        cluster = sorted_clusters[i]
+        for node in cluster:
+            nodes_to_output.append(node)
+    return nodes_to_output
     
+def get_num_clusters(G_in):
+    clusters = get_neil_output(G_in, verbose=False)
     
+    return len(clusters)
 
 """ ------------------------------------ DCP SIMULATION ------------------------------------ """
 
@@ -4829,9 +4955,19 @@ def sparsified_DCP_fast_memsafe(G, track_TOA=False, quasistationary = True, t_ma
     cc = nk.components.ConnectedComponents(G)
     cc.run()
     comps = cc.getComponents()
-    component_each_node_is_in = [get_sublist_with_value(u, comps) for u in G.iterNodes()]
+    component_each_node_is_in = [get_index_of_sublist_with_value(u, comps) for u in G.iterNodes()]
     #print(comps)
     
+    def component_has_many_active_sites(node):
+        #many=2
+        #nodes_of_component_this_node_is_in = comps[component_each_node_is_in[node]]
+        count_active  = 0
+        for i in comps[component_each_node_is_in[node]]:
+            if is_active[i]:
+                count_active += 1
+            if count_active > 1:
+                return True
+        return False
     
     
     while t < t_max:
@@ -4942,7 +5078,7 @@ def sparsified_DCP_fast_memsafe(G, track_TOA=False, quasistationary = True, t_ma
                     deltaT = 1/(Q*(N_active+1))
                     #t += deltaT
             
-            elif u1 <= prob_to_heal and not (quasistationary and N_active == 1):
+            elif u1 <= prob_to_heal and not (quasistationary and N_active == 1) and component_has_many_active_sites(random_site):
                 #print("healing")
                 #choose random node to heal?
                 #site_to_heal = np.random.choice(tuple(active_nodes)) #active_nodes[np.random.randint(0, len(active_nodes))] #np.random.choice(active_nodes_list, p=heal_pmf)
@@ -6160,7 +6296,7 @@ def fast_dcp_until_quasistationary(G, init_time = 2**6, t_max=10000000, G_struct
         print(" ------- ")
 
 
-def fast_dcp_until_quasistationary_memsafe(G, init_time = 2**3, t_max=10000000, G_structure="chain", original_graph_size=100, dimensions = [1, 1], viz=True, title="", spearman_thresh = 0.99, save_last_state=False, return_density_set=False, return_time = False, print_stats = True):
+def fast_dcp_until_quasistationary_memsafe(G, init_time = 2**3, t_max=4096, G_structure="chain", original_graph_size=100, dimensions = [1, 1], viz=True, title="", spearman_thresh = 0.99, save_last_state=False, return_density_set=False, return_time = False, print_stats = True):
     #init time should be a power of 2
     # it doesn't actually have to be but it should be just b/c that makes nice and intuitive doubling numbers
     # t_max should be really really big; on order of 10 million for a cycle of length L=32
@@ -6183,8 +6319,11 @@ def fast_dcp_until_quasistationary_memsafe(G, init_time = 2**3, t_max=10000000, 
             data_second_half = sparsified_DCP_fast_memsafe(G, t_max=t_i, original_graph_size=original_graph_size, return_density_set=return_density_set)
         spearman_compare_pval, lin_reg_r_squared, spearman_rho = spearman_compare_memsafe(data_first_half, data_second_half, original_graph_size, t_i, title=title + f", t_i={t_i} scatter plot", verbose = print_stats, make_fig=viz)
         
-        if spearman_compare_pval < 0.05 and spearman_rho > spearman_thresh:# and lin_reg_r_squared > 0.9:
-            print("found quasistationary state")
+        if (spearman_compare_pval < 0.05 and spearman_rho > spearman_thresh) or t_i > t_max:# and lin_reg_r_squared > 0.9:
+            if (spearman_compare_pval < 0.05 and spearman_rho > spearman_thresh):
+                print("found quasistationary state")
+            else:
+                print("ran into t_max")
             if viz:
                 vis_lat_advanced_memsafe(data_first_half, original_graph_size, t_i, G_structure, dimensions, title + f", Quasi: t_i={t_i}, 1st half")
                 vis_lat_advanced_memsafe(data_second_half, original_graph_size, t_i, G_structure, dimensions, title + f", Quasi: t_i={t_i}, 2nd half")
@@ -6579,7 +6718,7 @@ def spearman_compare_memsafe(orig_data, mod_data, original_graph_size, relaxatio
     return spearman_correlation.pvalue, linr.rvalue**2, spearman_correlation.statistic
 
 
-def spearman_compare_memsafe_diff(orig_data, mod_data, original_graph_size, relaxation_time_orig, relaxation_time_mod, wass_out=False, jensen_out = False, title = "", save_fig=False, verbose = True, show_fig=True):
+def spearman_compare_memsafe_diff(orig_data, mod_data, original_graph_size, relaxation_time_orig, relaxation_time_mod, important_nodes = [], wass_out=False, jensen_out = False, title = "", save_fig=False, verbose = True, show_fig=True):
     #get prop_time_active_orig
     #data_arr = [orig_data, mod_data]
     #prop_times_active = np.empty(2)
@@ -6587,15 +6726,20 @@ def spearman_compare_memsafe_diff(orig_data, mod_data, original_graph_size, rela
     prop_orig = []
     data = orig_data
     
-    print(orig_data)
-    print(mod_data)
+    #print(orig_data)
+    #print(mod_data)
         
     total_time_active_list = np.empty(original_graph_size)
     for site in data:
         
         total_time_active_list[site] = data[site][0]
+        #print(site)
     
     proportions_of_time_active_o = total_time_active_list/relaxation_time_orig
+    for i in range(len(proportions_of_time_active_o)):
+        if proportions_of_time_active_o[i] < 1e-320:
+            proportions_of_time_active_o[i] = 1e-320
+    #times_active_orig = proportions_of_time_active_o
     
     #proportions_of_time_active_o = total_time_active_list/relaxation_time
     prop_orig = [(proportions_of_time_active_o[i], i) for i in range(len(proportions_of_time_active_o)) ]
@@ -6606,8 +6750,13 @@ def spearman_compare_memsafe_diff(orig_data, mod_data, original_graph_size, rela
     for site in data:
         
         total_time_active_list[site] = data[site][0]
-    
+        #print(site)
     proportions_of_time_active_m = total_time_active_list/relaxation_time_mod
+    
+    for i in range(len(proportions_of_time_active_m)):
+        if proportions_of_time_active_m[i] < 1e-320:
+            proportions_of_time_active_m[i] = 1e-320
+    
     prop_mod = [(proportions_of_time_active_m[i], i) for i in range(len(proportions_of_time_active_m)) ]
     #a = []
     average_activity_comparison = np.average(abs(proportions_of_time_active_o - proportions_of_time_active_m))
@@ -6616,8 +6765,7 @@ def spearman_compare_memsafe_diff(orig_data, mod_data, original_graph_size, rela
     sorted_indices = [prop_orig[i][1] for i in range(len(prop_orig))]
     prop_mod_sorted = []
     for index in sorted_indices:
-        prop_mod_sorted.append(prop_mod[index][0])
-        #a.append((prop_mod[index][0], prop_mod[index][1]))
+        prop_mod_sorted.append(prop_mod[index][0])        #a.append((prop_mod[index][0], prop_mod[index][1]))
     #prop_mod = sorted(prop_mod, key=lambda x: x[1])
     
     def density_power_divergence(list1, list2, alpha=0.5, method='histogram', bins=50, 
@@ -6956,10 +7104,397 @@ def spearman_compare_memsafe_diff(orig_data, mod_data, original_graph_size, rela
         else:
             raise ValueError("method must be 'jeffreys' or 'jensen-shannon'")
     
+    def compute_weighted_wasserstein_2d(p, q, site_weights):
+        """
+        Computes the 2D weighted Wasserstein-1 distance between two discrete 
+        probability distributions p and q, using site_weights to adjust the ground cost.
+        
+        Parameters:
+        -----------
+        p : np.ndarray (2D)
+            Source probability distribution matrix.
+        q : np.ndarray (2D)
+            Target probability distribution matrix.
+        site_weights : np.ndarray (2D)
+            Importance/weight scaling factors for each site (i, j).
+            
+        Returns:
+        --------
+        float
+            The weighted Wasserstein distance.
+        """
+        # 1. Validation and flattening
+        assert p.shape == q.shape == site_weights.shape, "All arrays must share the same 2D shape."
+        H, W = p.shape
+        N = H * W
+        
+        p_flat = p.ravel() / p.sum()
+        q_flat = q.ravel() / q.sum()
+        w_flat = site_weights.ravel()
+        
+        # 2. Build the coordinate system
+        X, Y = np.meshgrid(np.arange(W), np.arange(H))
+        coords = np.vstack([Y.ravel(), X.ravel()]).T  # Dimensions: (N, 2)
+        
+        # 3. Generate the distance matrix
+        # Compute Euclidean distance between every combination of coordinates
+        diff = coords[:, None, :] - coords[None, :, :]  # Shape: (N, N, 2)
+        dist_matrix = np.linalg.norm(diff, axis=2)      # Shape: (N, N)
+        
+        # 4. Integrate site weights into the ground cost matrix
+        # Cost = Euclidean distance * average importance weight of source and target sites
+        weight_matrix = (w_flat[:, None] + w_flat[None, :]) / 2.0
+        C = dist_matrix * weight_matrix
+        c = C.ravel()  # Flatten for linear programming objective
+        
+        # 5. Build linear constraints (Mass conservation)
+        # Row constraints: Sum of mass exiting source i must equal p[i]
+        A_p = np.zeros((N, N * N))
+        for i in range(N):
+            A_p[i, i * N : (i + 1) * N] = 1
+            
+        # Column constraints: Sum of mass entering target j must equal q[j]
+        A_q = np.zeros((N, N * N))
+        for j in range(N):
+            A_q[j, j::N] = 1
+            
+        # Remove final row to eliminate redundant degrees of freedom 
+        A_eq = np.vstack([A_p, A_q[:-1]]) 
+        b_eq = np.concatenate([p_flat, q_flat[:-1]])
+        
+        # 6. Solve the linear programming optimization problem
+        res = scipy.optimize.linprog(c, A_eq=A_eq, b_eq=b_eq, method='highs')
+        
+        if res.success:
+            return res.fun
+        else:
+            raise ValueError(f"Optimization failed: {res.message}")
+    
+    from scipy.optimize import linear_sum_assignment
+    from scipy.spatial.distance import cdist
+    
+    def wasserstein_1_distance(p, q, weights=None, metric='euclidean'):
+        """
+        Compute the Wasserstein-1 distance between two 2D discrete probability distributions.
+        
+        Parameters:
+        -----------
+        p : numpy.ndarray of shape (n_points, 2)
+            First probability distribution as array of points with weights.
+            Each row: [x, y, probability] or if p_weights provided separately.
+        
+        q : numpy.ndarray of shape (m_points, 2)
+            Second probability distribution as array of points with weights.
+            Each row: [x, y, probability] or if q_weights provided separately.
+        
+        weights : numpy.ndarray of shape (height, width), optional
+            2D weighting array for the space. If provided, points are weighted
+            by these values before computing distances.
+        
+        metric : str or callable, default='euclidean'
+            Distance metric to use. Can be 'euclidean', 'manhattan', 'cosine',
+            or any metric supported by scipy.spatial.distance.cdist.
+        
+        Returns:
+        --------
+        float : Wasserstein-1 distance
+        
+        Examples:
+        ---------
+        >>> # Two simple distributions
+        >>> p = np.array([[0, 0, 0.5], [1, 1, 0.5]])
+        >>> q = np.array([[0, 1, 0.5], [1, 0, 0.5]])
+        >>> dist = wasserstein_1_distance(p, q)
+        
+        >>> # With spatial weighting
+        >>> weight_grid = np.ones((10, 10))
+        >>> dist = wasserstein_1_distance(p, q, weights=weight_grid)
+        """
+        print("000000000000")
+        print(len(p))
+        print(len(q))
+        # Separate coordinates and probabilities
+        if p.shape[1] == 3:
+            p_coords = p[:, :2]
+            p_probs = p[:, 2]
+        else:
+            raise ValueError("p must have shape (n, 3) with columns [x, y, prob]")
+        
+        if q.shape[1] == 3:
+            q_coords = q[:, :2]
+            q_probs = q[:, 2]
+        else:
+            raise ValueError("q must have shape (m, 3) with columns [x, y, prob]")
+        
+        # Normalize probabilities (ensure they sum to 1)
+        p_probs = p_probs / np.sum(p_probs)
+        q_probs = q_probs / np.sum(q_probs)
+        
+        # Apply spatial weighting if provided
+        if weights is not None:
+            # Convert coordinates to integer indices (assuming coordinates are grid points)
+            p_indices = p_coords.astype(int)
+            q_indices = q_coords.astype(int)
+            
+            # Get weights at these positions
+            p_weights = weights[p_indices[:, 0], p_indices[:, 1]]
+            q_weights = weights[q_indices[:, 0], q_indices[:, 1]]
+            
+            # Scale probabilities by spatial weights
+            p_probs = p_probs * p_weights
+            q_probs = q_probs * q_weights
+            
+            # Renormalize
+            p_probs = p_probs / np.sum(p_probs)
+            q_probs = q_probs / np.sum(q_probs)
+        
+        # Compute cost matrix (distances between all pairs of points)
+        cost_matrix = cdist(p_coords, q_coords, metric=metric)
+        
+        # Solve the optimal transport problem using Hungarian algorithm
+        # This minimizes sum_i sum_j T_ij * cost_ij subject to:
+        # sum_j T_ij = p_probs[i] and sum_i T_ij = q_probs[j]
+        
+        # For discrete distributions, we need to handle the case where
+        # probabilities might be very small or zero
+        # We'll use linear programming approach via linear_sum_assignment
+        
+        # Scale the cost matrix by probabilities to handle unequal masses
+        # We replicate points according to their probability mass
+        # This is a simple but approximate method for discrete distributions
+        
+        # Alternative: Use the exact linear programming formulation
+        # For the exact solution, we can use scipy.optimize.linprog
+        # but the Hungarian algorithm works well for equal total mass
+        
+        # Method 1: Using linear_sum_assignment (for equal number of points)
+        if len(p_probs) == len(q_probs):
+            row_ind, col_ind = linear_sum_assignment(cost_matrix)
+            distance = np.sum(cost_matrix[row_ind, col_ind] * p_probs)
+        else:
+            print("AAAAAAAAHHHHHHHHHHH")
+            # Method 2: For unequal number of points, use the exact OT solution
+            # This uses the Kantorovich formulation
+            from scipy.optimize import linprog
+            
+            n = len(p_probs)
+            m = len(q_probs)
+            
+            # Flatten the transportation matrix variables
+            # We want to minimize sum_{i,j} T_{ij} * C_{ij}
+            c = cost_matrix.flatten()
+            
+            # Constraints:
+            # For each i: sum_j T_{ij} = p_probs[i]
+            # For each j: sum_i T_{ij} = q_probs[j]
+            # T_{ij} >= 0
+            
+            # Equality constraints matrix
+            A_eq = np.zeros((n + m, n * m))
+            b_eq = np.concatenate([p_probs, q_probs])
+            
+            # Row constraints: for each i
+            for i in range(n):
+                A_eq[i, i*m:(i+1)*m] = 1
+            
+            # Column constraints: for each j
+            for j in range(m):
+                A_eq[n + j, j::m] = 1
+            
+            # Solve the linear program
+            result = linprog(c, A_eq=A_eq, b_eq=b_eq, method='highs')
+            
+            if result.success:
+                distance = result.fun
+            else:
+                raise RuntimeError("Linear programming failed to find optimal transport")
+        
+        return distance
+    
+    
+    def wasserstein_1_distance_2d_grid(p_grid, q_grid, weights=None, metric='euclidean'):
+        """
+        Compute Wasserstein-1 distance between two 2D distributions defined on a grid.
+        
+        Parameters:
+        -----------
+        p_grid : numpy.ndarray of shape (height, width)
+            First probability distribution on a 2D grid.
+        
+        q_grid : numpy.ndarray of shape (height, width)
+            Second probability distribution on a 2D grid.
+        
+        weights : numpy.ndarray of shape (height, width), optional
+            2D weighting array for the space.
+        
+        metric : str, default='euclidean'
+            Distance metric to use.
+        
+        Returns:
+        --------
+        float : Wasserstein-1 distance
+        """
+        # Convert grid to point list with coordinates
+        height, width = p_grid.shape
+        
+        # Flatten and get coordinates
+        p_flat = p_grid.flatten()
+        q_flat = q_grid.flatten()
+        
+        # Get non-zero indices
+        p_indices = np.where(p_flat > 0)[0]
+        q_indices = np.where(q_flat > 0)[0]
+        
+        # Convert to coordinates
+        p_rows, p_cols = np.unravel_index(p_indices, (height, width))
+        q_rows, q_cols = np.unravel_index(q_indices, (height, width))
+        
+        # Create point arrays with probabilities
+        p_points = np.column_stack([p_cols, p_rows, p_flat[p_indices]])
+        q_points = np.column_stack([q_cols, q_rows, q_flat[q_indices]])
+        
+        print(p_points)
+        print("delta")
+        print(q_points)
+
+        # Compute Wasserstein distance
+        return wasserstein_1_distance(p_points, q_points, weights, metric)
+    
+    import ot
+    
+    def wasserstein_2d_grid_pot(P, Q, L=None, metric='euclidean', return_plan=False):
+        """
+        Compute the 2D Wasserstein-1 distance between two LxL grid probability distributions
+        using POT (Python Optimal Transport) library.
+        
+        Parameters:
+        -----------
+        P : numpy.ndarray of shape (L, L)
+            First probability distribution on the grid
+            
+        Q : numpy.ndarray of shape (L, L)
+            Second probability distribution on the grid
+            
+        L : int, optional
+            Grid size. If None, inferred from P.shape[0]
+            
+        metric : str, default='euclidean'
+            Metric for cost matrix. Options: 'euclidean', 'manhattan', 'cosine'
+            
+        return_plan : bool, default=False
+            If True, also return the optimal transport plan
+            
+        Returns:
+        --------
+        float : Wasserstein-1 distance
+        (optional) numpy.ndarray : Optimal transport plan of shape (N, N) where N = L*L
+        """
+        
+        # Get grid size
+        if L is None:
+            L = P.shape[0]
+        
+        # Ensure distributions sum to 1
+        P = P / np.sum(P)
+        Q = Q / np.sum(Q)
+        #print(Q)
+        
+        # Flatten the distributions
+        p_flat = P.flatten()
+        q_flat = Q.flatten()
+        
+        # Remove zero-mass points for efficiency (optional but recommended)
+        # Keep only points with non-zero mass
+        p_nonzero = p_flat > 1e-322
+        q_nonzero = q_flat > 1e-322
+        
+        # If we remove zeros, we need to remap indices
+        if np.sum(p_nonzero) < L*L or np.sum(q_nonzero) < L*L:
+            # Get coordinates of non-zero points
+            p_indices = np.where(p_nonzero)[0]
+            q_indices = np.where(q_nonzero)[0]
+            
+            p_flat = p_flat[p_indices]
+            q_flat = q_flat[q_indices]
+            
+            # Convert flattened indices to 2D coordinates
+            p_coords = np.array(np.unravel_index(p_indices, (L, L))).T
+            q_coords = np.array(np.unravel_index(q_indices, (L, L))).T
+        else:
+            # All points have mass
+            p_indices = np.arange(L*L)
+            q_indices = np.arange(L*L)
+            p_coords = np.array(np.unravel_index(p_indices, (L, L))).T
+            q_coords = np.array(np.unravel_index(q_indices, (L, L))).T
+        
+        # Compute cost matrix (distance between all pairs of points)
+        # Use POT's built-in distance computation
+        if metric == 'euclidean':
+            # Compute pairwise Euclidean distances
+            M = ot.dist(p_coords, q_coords, metric='euclidean')
+        elif metric == 'manhattan':
+            M = ot.dist(p_coords, q_coords, metric='cityblock')
+        else:
+            # Use scipy for other metrics
+            from scipy.spatial.distance import cdist
+            M = cdist(p_coords, q_coords, metric=metric)
+        
+        # Solve the optimal transport problem
+        # This computes the Wasserstein-1 distance (EMD)
+        # method='emd' gives exact solution using network simplex
+        
+        # For 1D or small problems, use EMD
+        if len(p_flat) * len(q_flat) <= 10000:  # Reasonable size for exact EMD
+            
+            #print(f"{np.sum(p_flat)} --- {np.sum(q_flat)}")
+            #if np.sum(q_flat) < 0.01:
+                #print(q_flat)
+            transport_plan = ot.emd(p_flat, q_flat, M)
+        else:
+            # For larger problems, use Sinkhorn (regularized OT) for speed
+            # Note: Sinkhorn gives an approximation with regularization
+            reg = 0.1  # Regularization parameter (adjust as needed)
+            transport_plan = ot.sinkhorn(p_flat, q_flat, M, reg)
+        
+        # Wasserstein distance is the trace of (transport_plan * M)
+        distance = np.sum(transport_plan * M)
+        
+        if return_plan:
+            # Reconstruct full transport plan on the original LxL grid
+            full_plan = np.zeros((L*L, L*L))
+            for i, pi in enumerate(p_indices):
+                for j, qj in enumerate(q_indices):
+                    full_plan[pi, qj] = transport_plan[i, j]
+            return distance, full_plan.reshape(L*L, L*L)
+        
+        return distance
+
+    L = int(math.sqrt(original_graph_size))
+    weights = []
+    if important_nodes == []:
+        weights = np.ones((L, L))
+    else:
+        weights = np.zeros(original_graph_size)
+        for node in important_nodes:
+            weights[node] = 1
+        weights = list(weights)
+    
     spearman_correlation = scipy.stats.spearmanr(sorted_prop_time_active_o, prop_mod_sorted)
     
-    wasserstein_dist = scipy.stats.wasserstein_distance(sorted_prop_time_active_o, prop_mod_sorted)
-    jensenshannon_dist = weighted_kl_divergence_symmetric(sorted_prop_time_active_o, prop_mod_sorted, weights=list(20*np.array(sorted_prop_time_active_o)**2)) #scipy.special.kl_div(sorted_prop_time_active_o, prop_mod_sorted)
+    matrix_o = np.reshape(proportions_of_time_active_o, [L, L])
+    matrix_m = np.reshape(proportions_of_time_active_m, [L, L])
+    #print(matrix_m)
+    weight_matrix = np.reshape(weights, [L, L])
+    #print(matrix_o)
+
+    wasserstein_dist = wasserstein_2d_grid_pot(matrix_o, matrix_m, metric='manhattan')#scipy.stats.wasserstein_distance(sorted_prop_time_active_o, prop_mod_sorted)
+    #print("calculating 2d wasserstein distance")
+    jensenshannon_dist = 0
+    if np.inf not in matrix_m and np.nan not in matrix_m:
+        #print(matrix_m)
+        #print(np.sum(matrix_m*weight_matrix))
+        jensenshannon_dist = wasserstein_2d_grid_pot(matrix_o*weight_matrix, matrix_m*weight_matrix, metric='manhattan') #wasserstein_1_distance_2d_grid(matrix_o, matrix_m) #scipy.stats.wasserstein_distance_nd(matrix_o, matrix_m, u_weights=weight_matrix, v_weights=weight_matrix) #weighted_kl_divergence_symmetric(sorted_prop_time_active_o, prop_mod_sorted, weights=weights) #scipy.special.kl_div(sorted_prop_time_active_o, prop_mod_sorted)
+    #print("done with it")
     linr = scipy.stats.linregress(sorted_prop_time_active_o, prop_mod_sorted)
     if verbose:
         print(f"{linr.slope}, {linr.intercept}, {linr.pvalue}, {linr.stderr}, {linr.intercept_stderr}")
@@ -6981,8 +7516,8 @@ def spearman_compare_memsafe_diff(orig_data, mod_data, original_graph_size, rela
         print(f"absolute node-by-node activity difference, averaged: {average_activity_comparison}")
         print(f"spearman rho: {spearman_correlation.statistic}")
         #print(f"spearman p-value: {spearman_correlation.pvalue}")
-        print(f"jensen-shannon: {jensenshannon_dist}")
-        print(f"wasserstein distance: {wasserstein_dist}")
+        print(f"2D wasserstein of important sites: {jensenshannon_dist}")
+        print(f"2D wasserstein distance: {wasserstein_dist}")
     
     if wass_out and not jensen_out:
         return spearman_correlation.pvalue, linr.rvalue**2, spearman_correlation.statistic, wasserstein_dist
@@ -7848,6 +8383,13 @@ def get_sublist_with_value(val, superlist):
             return sublist
     raise ValueError(f"{val} is not in any of the sublists either!")
 
+def get_index_of_sublist_with_value(val, superlist):
+    for i in range(len(superlist)):
+        sublist = superlist[i]
+        if val in sublist:
+            return i
+    raise ValueError(f"{val} is not in any of the sublists either!")
+    
 def print_graph_values(G, just_first_few = True):
     healing_factor = G.getNodeAttribute("mu", float)
     num_edges = G.numberOfEdges()
@@ -8001,7 +8543,7 @@ def vis_lat(data, dimensions):
     fig.colorbar(pos, ax=ax)    
     plt.show()
     
-def vis_lat_advanced(data, original_graph_size, relaxation_time, G_structure, dimensions, title, save_fig = False):
+def vis_lat_advanced(data, original_graph_size, relaxation_time, G_structure, dimensions, title, highlight_nodes=[], save_fig = False):
     #matrix = np.matrix(data.to_numpy())
     
     test_trans = data[0]
@@ -8055,7 +8597,6 @@ def vis_lat_advanced(data, original_graph_size, relaxation_time, G_structure, di
         
         fig, ax = plt.subplots()
         ax.pcolormesh(x, y, Z, cmap='viridis', vmin=0, vmax=1)
-                
 
         #fig.tight_layout()
 
@@ -8075,7 +8616,7 @@ def vis_lat_advanced(data, original_graph_size, relaxation_time, G_structure, di
         plt.show()
    
 
-def vis_lat_advanced_memsafe(data, original_graph_size, relaxation_time, G_structure, dimensions, title, save_fig=False):
+def vis_lat_advanced_memsafe(data, original_graph_size, relaxation_time, G_structure, dimensions, title, nodes_to_highlight=[], save_fig=False):
     #matrix = np.matrix(data.to_numpy())
     
     #print(matrix.shape)
@@ -8083,7 +8624,8 @@ def vis_lat_advanced_memsafe(data, original_graph_size, relaxation_time, G_struc
     for site in data:
         
         if site == 0:
-            print(data[site][0])
+            #print(data[site][0])
+            pass
         
         total_time_active_list[site] = data[site][0]
     
@@ -8121,7 +8663,12 @@ def vis_lat_advanced_memsafe(data, original_graph_size, relaxation_time, G_struc
         
         fig, ax = plt.subplots()
         ax.pcolormesh(x, y, Z, cmap='viridis', vmin=0, vmax=1)
-                
+        L = math.sqrt(original_graph_size)
+        for imp_node in nodes_to_highlight:
+            y_coord = imp_node % w
+            x_coord = imp_node // h
+        
+            ax.scatter([x_coord], [y_coord], color='red', edgecolor='red', s=200/L, zorder=5, label='Point Overlay')
 
         #fig.tight_layout()
 
@@ -8175,8 +8722,8 @@ def vis_clusters(G_in, L, G_structure, title):
             cluster_color = mcolors.to_rgb(rand_color)
             #print(cluster_color)
             for node in cluster:
-                y = node // L
-                x = node % L
+                y = node % L
+                x = node // L
                 Z[x,y] = cluster_color
         #first build a bunch of lines/rows
         
@@ -8635,9 +9182,10 @@ def test12():
         i += 1
 
 def test_sdrg_backbone(L, lm = True, multiplicity=False):
+    t0 = time.time()
     seed = int((time.time_ns()/100)%10000000)
     np.random.seed(seed)
-    add_title_data = "backbone_multiplicity"
+    add_title_data = "st_sdrg"
     G_init = generate_square_lattice(L, L)
     
     mu_scale = SDRG_crit_point_estimation(G_init, 20)
@@ -8645,9 +9193,16 @@ def test_sdrg_backbone(L, lm = True, multiplicity=False):
     G_init = scale_mu(G_init, mu_scale)
     
     G_sdrg = sdrg_sparsify_partial(G_init, 0, True, local_max=lm, return_incremental_sparsifications=False, use_multiplicity=multiplicity)
-    spearman_thresh = 0.9
+    spearman_thresh = 0.98
     data_orig, t_orig = fast_dcp_until_quasistationary_memsafe(G_init, G_structure="lattice", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} control {add_title_data}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
     save_data(data_orig, f"L{L}x{L}_s{seed}_control_{add_title_data}")
+    
+    imp_nodes = []#get_nodes_of_largest_k_clusters(G, 3)
+    for site in data_orig:
+        #print(ctrl[site])
+        if data_orig[site][0] > t_orig * 0.9:
+            imp_nodes.append(site)
+    
     
     print("- running simulation on sdrg network -")
     mu_scale = SDRG_crit_point_estimation(G_sdrg, 20)
@@ -8656,20 +9211,29 @@ def test_sdrg_backbone(L, lm = True, multiplicity=False):
     
     data, t_sdrg = fast_dcp_until_quasistationary_memsafe(G_sdrg, G_structure="lattice", original_graph_size=G_sdrg.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} sdrgFull {add_title_data}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
     save_data(data, f"L{L}x{L}_s{seed}_sdrgFull_{add_title_data}")
-
     n_samples = G_sdrg.numberOfEdges()
-
+    
     print("- running smds for comparison -")
-    gsmds = SMDS_to_n_edges(G_init, n_samples)
+    gsmds = semi_metric_backbone(G_init) #SMDS_to_n_edges(G_init, n_samples)
     data_smds, t_smds = fast_dcp_until_quasistationary_memsafe(gsmds, G_structure="lattice", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} smds {add_title_data}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
     save_data(data_smds, f"L{L}x{L}_s{seed}_smds_{add_title_data}")
     
+    
+    
+    
+    """
+    print("- running STsdrg for comparison -")
+    G_stsdrg = shortest_tree_sdrg(G_init, n_samples)
+    
+    data_stsdrg, t_stsdrg = fast_dcp_until_quasistationary_memsafe(G_stsdrg, G_structure="lattice", original_graph_size=G_stsdrg.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} ST_SDRG {add_title_data}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
+    save_data(data_stsdrg, f"L{L}x{L}_s{seed}_STsdrg_{add_title_data}")
+    """
     print("- running effR for comparison -")
     geffr = copy_graph(G_init)
     geffr = effective_resistance_sampling_sparsification(geffr, n_samples)
-    data_effr, t_effr = fast_dcp_until_quasistationary_memsafe(geffr, G_structure="lattice", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} effr {add_title_data}", return_time=True, spearman_thresh=0.45, save_last_state=True, viz=True)
+    data_effr, t_effr = fast_dcp_until_quasistationary_memsafe(geffr, G_structure="lattice", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} effr {add_title_data}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
     save_data(data_effr, f"L{L}x{L}_s{seed}_effr_{add_title_data}")
-    """
+    
     print("- running uniform for comparison -")
     guni = copy_graph(G_init)
     guni = uniform_sampling_sparsification(guni, n_samples) 
@@ -8679,15 +9243,15 @@ def test_sdrg_backbone(L, lm = True, multiplicity=False):
     print("- running weight sampling for comparison -")
     gweight = copy_graph(G_init)
     gweight = weight_sampling_sparsification(gweight, n_samples) #uniform_sampling_sparsification(guni, n_samples) 
-    data_weight, t_weight = fast_dcp_until_quasistationary_memsafe(gweight, G_structure="lattice", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} weighte {add_title_data}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
-    save_data(data_uni, f"L{L}x{L}_s{seed}_weightBased_{add_title_data}")
+    data_weight, t_weight = fast_dcp_until_quasistationary_memsafe(gweight, G_structure="lattice", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} weighted {add_title_data}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
+    save_data(data_weight, f"L{L}x{L}_s{seed}_weightBased_{add_title_data}")
     
     print("- running thresholding for comparison -")
     gthresh = copy_graph(G_init)
     gthresh =  threshold_sparsification(gthresh, n_samples) #weight_sampling_sparsification(gweight, n_samples) #uniform_sampling_sparsification(guni, n_samples) 
     data_thresh, t_thresh = fast_dcp_until_quasistationary_memsafe(gthresh, G_structure="lattice", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} thresh {add_title_data}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
-    save_data(data_uni, f"L{L}x{L}_s{seed}_thresholding_{add_title_data}")
-    """
+    save_data(data_thresh, f"L{L}x{L}_s{seed}_thresholding_{add_title_data}")
+    
     print("============================")
     print("===== Final Data Stuff =====")
     print("============================")
@@ -8695,16 +9259,26 @@ def test_sdrg_backbone(L, lm = True, multiplicity=False):
     print("- sdrg stats -")
     print(f"sdrg graph has {G_sdrg.numberOfEdges()} edges")
 
-    sprmn_pval, r_sq, sprmn_rho = spearman_compare_memsafe_diff(data_orig, data, G_sdrg.numberOfNodes(), t_orig, t_sdrg, title=f"ctrl v.s. sdrg", save_fig=True)
+    sprmn_pval, r_sq, sprmn_rho = spearman_compare_memsafe_diff(data_orig, data, G_sdrg.numberOfNodes(), t_orig, t_sdrg, title=f"ctrl v.s. sdrg", important_nodes=imp_nodes, save_fig=True)
+    
+    
+    """
+    print("- stsdrg stats -")
+    print(f"stsdrg graph has {G_stsdrg.numberOfEdges()} edges")
+
+    sprmn_pval, r_sq, sprmn_rho = spearman_compare_memsafe_diff(data_orig, data_stsdrg, G_stsdrg.numberOfNodes(), t_orig, t_stsdrg, title=f"ctrl v.s. STsdrg", important_nodes=imp_nodes, save_fig=True)
+    """
+    
     
     print("- smds stats -")
     print(f"smds graph has {gsmds.numberOfEdges()} edges")
-    sprmn_pval, r_sq, sprmn_rho = spearman_compare_memsafe_diff(data_orig, data_smds, gsmds.numberOfNodes(), t_orig, t_smds, title=f"ctrl v.s. smds", save_fig=True)
+    sprmn_pval, r_sq, sprmn_rho = spearman_compare_memsafe_diff(data_orig, data_smds, gsmds.numberOfNodes(), t_orig, t_smds, title=f"ctrl v.s. smds", important_nodes=imp_nodes, save_fig=True)
+    
     
     print("- effR stats -")
     print(f"effR graph has {geffr.numberOfEdges()} edges")
     sprmn_pval, r_sq, sprmn_rho = spearman_compare_memsafe_diff(data_orig, data_effr, gsmds.numberOfNodes(), t_orig, t_effr, title=f"ctrl v.s. effR", save_fig=True)
-    """
+    
     print("- uniform stats -")
     print(f"uniform graph has {gweight.numberOfEdges()} edges")
     sprmn_pval, r_sq, sprmn_rho = spearman_compare_memsafe_diff(data_orig, data_uni, gsmds.numberOfNodes(), t_orig, t_uni, title=f"ctrl v.s. uniform", save_fig=True)
@@ -8716,7 +9290,126 @@ def test_sdrg_backbone(L, lm = True, multiplicity=False):
     print("- thresholding stats -")
     print(f"thresholding graph has {gsmds.numberOfEdges()} edges")
     sprmn_pval, r_sq, sprmn_rho = spearman_compare_memsafe_diff(data_orig, data_thresh, gsmds.numberOfNodes(), t_orig, t_thresh, title=f"ctrl v.s. thresh", save_fig=True)
+    
+    print(f"finished after {time.time()-t0} seconds")
+    
+    
+
+def test_sparsities(L, sparsity_levels=[0.9, 0.8, 0.7, 0.6], lm = True, multiplicity=False):
+    t0 = time.time()
+    seed = int((time.time_ns()/100)%10000000)
+    np.random.seed(seed)
+    add_title_data = "st_sdrg"
+    G_init = generate_square_lattice(L, L)
+    
+    #target_number_of_nodes = G_init.numberOfNodes() * sparsity
+    
+    mu_scale = SDRG_crit_point_estimation(G_init, 20)
+    
+    G_init = scale_mu(G_init, mu_scale)
+    
+    G_sdrg = sdrg_sparsify_partial(G_init, 0, True, local_max=lm, return_incremental_sparsifications=False, use_multiplicity=multiplicity)
+    spearman_thresh = 0.98
+    data_orig, t_orig = fast_dcp_until_quasistationary_memsafe(G_init, G_structure="lattice", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} control {add_title_data}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
+    save_data(data_orig, f"L{L}x{L}_s{seed}_control_{add_title_data}")
+    
+    imp_nodes = []#get_nodes_of_largest_k_clusters(G, 3)
+    for site in data_orig:
+        #print(ctrl[site])
+        if data_orig[site][0] > t_orig * 0.9:
+            imp_nodes.append(site)
+    
+    
+    print("- running simulation on sdrg network -")
+    mu_scale = SDRG_crit_point_estimation(G_sdrg, 20)
+    
+    G_sdrg = scale_mu(G_sdrg, mu_scale)
+    
+    data, t_sdrg = fast_dcp_until_quasistationary_memsafe(G_sdrg, G_structure="lattice", original_graph_size=G_sdrg.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} sdrgFull {add_title_data}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
+    save_data(data, f"L{L}x{L}_s{seed}_sdrgFull_{add_title_data}")
+    n_samples = G_sdrg.numberOfEdges()
+    
+    print("- running smds for comparison -")
+    gsmds = semi_metric_backbone(G_init) #SMDS_to_n_edges(G_init, n_samples)
+    data_smds, t_smds = fast_dcp_until_quasistationary_memsafe(gsmds, G_structure="lattice", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} smds {add_title_data}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
+    save_data(data_smds, f"L{L}x{L}_s{seed}_smds_{add_title_data}")
+    
+    
+    
+    
     """
+    print("- running STsdrg for comparison -")
+    G_stsdrg = shortest_tree_sdrg(G_init, n_samples)
+    
+    data_stsdrg, t_stsdrg = fast_dcp_until_quasistationary_memsafe(G_stsdrg, G_structure="lattice", original_graph_size=G_stsdrg.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} ST_SDRG {add_title_data}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
+    save_data(data_stsdrg, f"L{L}x{L}_s{seed}_STsdrg_{add_title_data}")
+    """
+    print("- running effR for comparison -")
+    geffr = copy_graph(G_init)
+    geffr = effective_resistance_sampling_sparsification(geffr, n_samples)
+    data_effr, t_effr = fast_dcp_until_quasistationary_memsafe(geffr, G_structure="lattice", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} effr {add_title_data}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
+    save_data(data_effr, f"L{L}x{L}_s{seed}_effr_{add_title_data}")
+    
+    print("- running uniform for comparison -")
+    guni = copy_graph(G_init)
+    guni = uniform_sampling_sparsification(guni, n_samples) 
+    data_uni, t_uni = fast_dcp_until_quasistationary_memsafe(geffr, G_structure="lattice", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} uniform {add_title_data}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
+    save_data(data_uni, f"L{L}x{L}_s{seed}_uniform_{add_title_data}")
+    
+    print("- running weight sampling for comparison -")
+    gweight = copy_graph(G_init)
+    gweight = weight_sampling_sparsification(gweight, n_samples) #uniform_sampling_sparsification(guni, n_samples) 
+    data_weight, t_weight = fast_dcp_until_quasistationary_memsafe(gweight, G_structure="lattice", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} weighted {add_title_data}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
+    save_data(data_weight, f"L{L}x{L}_s{seed}_weightBased_{add_title_data}")
+    
+    print("- running thresholding for comparison -")
+    gthresh = copy_graph(G_init)
+    gthresh =  threshold_sparsification(gthresh, n_samples) #weight_sampling_sparsification(gweight, n_samples) #uniform_sampling_sparsification(guni, n_samples) 
+    data_thresh, t_thresh = fast_dcp_until_quasistationary_memsafe(gthresh, G_structure="lattice", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} thresh {add_title_data}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
+    save_data(data_thresh, f"L{L}x{L}_s{seed}_thresholding_{add_title_data}")
+    
+    print("============================")
+    print("===== Final Data Stuff =====")
+    print("============================")
+    
+    print("- sdrg stats -")
+    print(f"sdrg graph has {G_sdrg.numberOfEdges()} edges")
+
+    sprmn_pval, r_sq, sprmn_rho = spearman_compare_memsafe_diff(data_orig, data, G_sdrg.numberOfNodes(), t_orig, t_sdrg, title=f"ctrl v.s. sdrg", important_nodes=imp_nodes, save_fig=True)
+    
+    
+    """
+    print("- stsdrg stats -")
+    print(f"stsdrg graph has {G_stsdrg.numberOfEdges()} edges")
+
+    sprmn_pval, r_sq, sprmn_rho = spearman_compare_memsafe_diff(data_orig, data_stsdrg, G_stsdrg.numberOfNodes(), t_orig, t_stsdrg, title=f"ctrl v.s. STsdrg", important_nodes=imp_nodes, save_fig=True)
+    """
+    
+    
+    print("- smds stats -")
+    print(f"smds graph has {gsmds.numberOfEdges()} edges")
+    sprmn_pval, r_sq, sprmn_rho = spearman_compare_memsafe_diff(data_orig, data_smds, gsmds.numberOfNodes(), t_orig, t_smds, title=f"ctrl v.s. smds", important_nodes=imp_nodes, save_fig=True)
+    
+    
+    print("- effR stats -")
+    print(f"effR graph has {geffr.numberOfEdges()} edges")
+    sprmn_pval, r_sq, sprmn_rho = spearman_compare_memsafe_diff(data_orig, data_effr, gsmds.numberOfNodes(), t_orig, t_effr, title=f"ctrl v.s. effR", save_fig=True)
+    
+    print("- uniform stats -")
+    print(f"uniform graph has {gweight.numberOfEdges()} edges")
+    sprmn_pval, r_sq, sprmn_rho = spearman_compare_memsafe_diff(data_orig, data_uni, gsmds.numberOfNodes(), t_orig, t_uni, title=f"ctrl v.s. uniform", save_fig=True)
+    
+    print("- weight sampling stats -")
+    print(f"weight sampling graph has {gthresh.numberOfEdges()} edges")
+    sprmn_pval, r_sq, sprmn_rho = spearman_compare_memsafe_diff(data_orig, data_weight, gsmds.numberOfNodes(), t_orig, t_weight, title=f"ctrl v.s. weighted", save_fig=True)
+    
+    print("- thresholding stats -")
+    print(f"thresholding graph has {gsmds.numberOfEdges()} edges")
+    sprmn_pval, r_sq, sprmn_rho = spearman_compare_memsafe_diff(data_orig, data_thresh, gsmds.numberOfNodes(), t_orig, t_thresh, title=f"ctrl v.s. thresh", save_fig=True)
+    
+    print(f"finished after {time.time()-t0} seconds")
+    
+    
 def extract_data_text_sdrg_smds_compare():
     
     from pathlib import Path
@@ -8771,7 +9464,7 @@ def extract_data_pickles_compare(L, extra_name=""):
     # Get all files (ignoring folders)
     files = [f for f in dir_path.iterdir() if f.is_file()]
     #print(files)
-    for file_ind in range(0, 1):#len(files)-2, 3):
+    for file_ind in range(0, len(files)-2, 3):
         ctrl_filename = str(files[file_ind])[:-4]
         seed = ctrl_filename.split("_")[6]
         #ctrl_filename = ctrl_filename[:-4]
@@ -8779,27 +9472,230 @@ def extract_data_pickles_compare(L, extra_name=""):
         smds_filename = str(files[file_ind+2])[:-4]
         #print(ctrl_filename)
         ctrl = open_data(ctrl_filename)
+        #print(f"ctrl: {ctrl_filename}")
         sdrg = open_data(sdrg_filename)
+        #print(f"sdrg: {sdrg_filename}")
         smds = open_data(smds_filename)
         #if file_ind == 0:
         rough_t_ctrl = ctrl[0][2]
         rough_t_sdrg = sdrg[0][2]
         rough_t_smds = smds[0][2]
         #print(ctrl[0])
+        seed_num = int(seed[1:])
+        np.random.seed(seed_num)
+        #G = generate_square_lattice(L, L)
         
-        #we'll have tp make a function that gets the nearest higher power of two (i.e, possible max time)
-        sp_pval, r_sq, sp_rho_sd, wass_sdrg, jens_sdrg = spearman_compare_memsafe_diff(ctrl, sdrg, L*L, rough_t_ctrl, rough_t_sdrg, title=f"{L}x{L} ctrl v.s. sdrg: seed={seed}", wass_out = True, jensen_out = True, verbose=False, show_fig=False)
-        sp_pval, r_sq, sp_rho_sm, wass_smds, jens_smds = spearman_compare_memsafe_diff(ctrl, smds, L*L, rough_t_ctrl, rough_t_smds, title=f"{L}x{L} ctrl v.s. smds: seed={seed}", wass_out = True, jensen_out = True, verbose=False, show_fig=False)
+        imp_nodes = []#get_nodes_of_largest_k_clusters(G, 3)
+        for site in ctrl:
+            #print(ctrl[site])
+            if ctrl[site][0] > rough_t_ctrl * 0.99:
+                imp_nodes.append(site)
+                
+        if len(imp_nodes) > 1:
+            #we'll have tp make a function that gets the nearest higher power of two (i.e, possible max time)
+            sp_pval, r_sq, sp_rho_sd, wass_sdrg, jens_sdrg = spearman_compare_memsafe_diff(ctrl, sdrg, L*L, rough_t_ctrl, rough_t_sdrg, title=f"{L}x{L} ctrl v.s. sdrg: seed={seed}", wass_out = True, jensen_out = True, important_nodes = imp_nodes, verbose=False, show_fig=False)
+            sp_pval, r_sq, sp_rho_sm, wass_smds, jens_smds = spearman_compare_memsafe_diff(ctrl, smds, L*L, rough_t_ctrl, rough_t_smds, title=f"{L}x{L} ctrl v.s. smds: seed={seed}", wass_out = True, jensen_out = True, important_nodes = imp_nodes, verbose=False, show_fig=False)
+            
+            #vis_clusters(G, L, "lattice", f"{L}x{L} clusters: seed={seed_num}")
+            
+            #vis_lat_advanced_memsafe(ctrl, L*L, rough_t_ctrl, "lattice", [L, L], f"{L}x{L} ctrl: seed={seed_num}", nodes_to_highlight=imp_nodes)
+            #vis_lat_advanced_memsafe(sdrg, L*L, rough_t_sdrg, "lattice", [L, L], f"{L}x{L} sdrg: seed={seed_num}", nodes_to_highlight=imp_nodes)
+            #vis_lat_advanced_memsafe(smds, L*L, rough_t_smds, "lattice", [L, L], f"{L}x{L} smds: seed={seed_num}", nodes_to_highlight=imp_nodes)
+            #print(f"-- {seed_num} --")
+            #print(f"{rough_t_ctrl}\t{rough_t_sdrg}\t{rough_t_smds}")
+            #print(f"{sp_rho_sd}\t{sp_rho_sm}")
+            print(f"{jens_sdrg}\t{jens_smds}")
+            #print(f"{wass_sdrg}\t{wass_smds}")
+          
+def extract_data_pickles_compare_4(L, extra_name=""):
+    
+    from pathlib import Path
+
+    # Replace with your directory path
+    #L = 16
+    dir_path = Path(f'C:/Users/zidda/Documents/Summer 26 Research/SDRG_Sparsification_py/sdrg_sparsification/data_files/L{L}_pickles{extra_name}')
+    
+    
+    # Get all files (ignoring folders)
+    files = [f for f in dir_path.iterdir() if f.is_file()]
+    #print(files)
+    
+    sdrg_data = []
+    smds_data = []
+    st_data = []
+    bins = np.linspace(0,1.5, 31)#range(0,1.5,0.05)
+    
+    for file_ind in range(0, len(files)-2, 4):
+        ctrl_filename = str(files[file_ind])[:-4]
+        seed = ctrl_filename.split("_")[7]
+        #ctrl_filename = ctrl_filename[:-4]
+        sdrg_filename = str(files[file_ind+1])[:-4]
+        smds_filename = str(files[file_ind+2])[:-4]
+        st_filename = str(files[file_ind+3])[:-4]
+        #print(ctrl_filename)
+        ctrl = open_data(ctrl_filename)
+        #print(f"ctrl: {ctrl_filename}")
+        sdrg = open_data(sdrg_filename)
+        #print(f"sdrg: {sdrg_filename}")
+        smds = open_data(smds_filename)
         
-        #print(f"-- {seed} --")
-        print(f"{rough_t_ctrl}\t{rough_t_sdrg}\t{rough_t_smds}")
-        #print(f"{sp_rho_sd}\t{sp_rho_sm}")
-        #print(f"{wass_sdrg}\t{wass_smds}")
+        st = open_data(st_filename)
+        #if file_ind == 0:
+        rough_t_ctrl = ctrl[0][2]
+        rough_t_sdrg = sdrg[0][2]
+        rough_t_smds = smds[0][2]
+        rough_t_st = st[0][2]
+        #print(ctrl[0])
+        seed_num = int(seed[1:])
+        np.random.seed(seed_num)
+        #G = generate_square_lattice(L, L)
         
+        imp_nodes = []#get_nodes_of_largest_k_clusters(G, 3)
+        sorted_sites = sorted([ctrl[site][0] for site in ctrl])
+        
+        #print(sorted_sites[round(0.98*len(sorted_sites))] / rough_t_ctrl)
+        for site in ctrl:
+            #print(ctrl[site])
+            #if a site is in the top 10%
+            if ctrl[site][0] > sorted_sites[round(0.9*len(sorted_sites))]: #rough_t_ctrl * 0.5:
+                imp_nodes.append(site)
+        
+        
+        #add in any others
+        if len(imp_nodes) > 1:
+            #we'll have tp make a function that gets the nearest higher power of two (i.e, possible max time)
+            sp_pval, r_sq, sp_rho_sd, wass_sdrg, jens_sdrg = spearman_compare_memsafe_diff(ctrl, sdrg, L*L, rough_t_ctrl, rough_t_sdrg, title=f"{L}x{L} ctrl v.s. sdrg: seed={seed}", wass_out = True, jensen_out = True, important_nodes = imp_nodes, verbose=False, show_fig=False)
+            sp_pval, r_sq, sp_rho_st, wass_st, jens_st = spearman_compare_memsafe_diff(ctrl, st, L*L, rough_t_ctrl, rough_t_st, title=f"{L}x{L} ctrl v.s. st: seed={seed}", wass_out = True, jensen_out = True, important_nodes = imp_nodes, verbose=False, show_fig=False)
+            sp_pval, r_sq, sp_rho_sm, wass_smds, jens_smds = spearman_compare_memsafe_diff(ctrl, smds, L*L, rough_t_ctrl, rough_t_smds, title=f"{L}x{L} ctrl v.s. smds: seed={seed}", wass_out = True, jensen_out = True, important_nodes = imp_nodes, verbose=False, show_fig=False)
+            
+            #vis_clusters(G, L, "lattice", f"{L}x{L} clusters: seed={seed_num}")
+            
+            #vis_lat_advanced_memsafe(ctrl, L*L, rough_t_ctrl, "lattice", [L, L], f"{L}x{L} ctrl: seed={seed_num}", nodes_to_highlight=imp_nodes)
+            #vis_lat_advanced_memsafe(sdrg, L*L, rough_t_sdrg, "lattice", [L, L], f"{L}x{L} sdrg: seed={seed_num}", nodes_to_highlight=imp_nodes)
+            #vis_lat_advanced_memsafe(smds, L*L, rough_t_smds, "lattice", [L, L], f"{L}x{L} smds: seed={seed_num}", nodes_to_highlight=imp_nodes)
+            #print(f"-- {seed_num} --")
+            #print(f"{rough_t_ctrl}\t{rough_t_sdrg}\t{rough_t_smds}")
+            #print(f"{sp_rho_sd}\t{sp_rho_sm}")
+            print(f"{jens_sdrg}\t{jens_st}\t{jens_smds}")
+            sdrg_data.append(jens_sdrg)
+            smds_data.append(jens_smds)
+            st_data.append(jens_st)
+            #print(f"{wass_sdrg}\t{wass_smds}")
+        
+    
+    #print(sdrg_data)
+    sns.histplot(sdrg_data, bins=bins, color="blue", label="SDRG", alpha=0.4, element="step")
+    sns.histplot(smds_data, bins=bins, color="orange", label="SMDS", alpha=0.4, element="step")
+    
+    # 4. Finalize the chart details
+    plt.xlabel("Wasserstein Distance - Most Active 10%")
+    plt.ylabel("Frequency")
+    plt.title("SDRG v.s. SMDS Quasistationary Wasserstein Distance from Control")
+    plt.legend(loc="upper right")
+    
+    plt.show()
+
+def extract_data_pickles_compare_all(L, extra_name=""):
+    
+    from pathlib import Path
+
+    # Replace with your directory path
+    #L = 16
+    dir_path = Path(f'C:/Users/zidda/Documents/Summer 26 Research/SDRG_Sparsification_py/sdrg_sparsification/data_files/L{L}_pickles{extra_name}')
+    
+    
+    # Get all files (ignoring folders)
+    files = [f for f in dir_path.iterdir() if f.is_file()]
+    #print(files)
+    
+    sdrg_data = []
+    smds_data = []
+    st_data = []
+    
+    test_datas = [[], [], [], [], [], [], []]#seven empties, one for each test
+    
+    #this controls the percentile of activity we examine. 0.0 gives all nodes, 0.95 gives the top 5% by activity, etc.
+    percentile = 0.0
+    
+    bins = np.linspace(0,2, 41)#range(0,1.5,0.05)
+    num_tests = 7
+    names = ["ctrl", "effr", "sdrg", "smds", "thresh", "uniform", "weight"]
+    colors = ["white", "red", "orange", "yellow", "green", "blue", "purple", "black"]
+    for file_ind in range(0, len(files)-1, num_tests):
+        ctrl_filename = str(files[file_ind])[:-4]
+        ctrl = open_data(ctrl_filename)
+        seed = ctrl_filename.split("_")[7]
+        #"C:\Users\zidda\Documents\Summer 26 Research\SDRG_Sparsification_py\sdrg_sparsification\data_files\L16_pickles_alltests\L16x16_s4239702_control_st_sdrg.pkl"
+        seed_num = int(seed[1:])
+        np.random.seed(seed_num)
+        
+        imp_nodes = []#get_nodes_of_largest_k_clusters(G, 3)
+        sorted_sites = sorted([ctrl[site][0] for site in ctrl])
+        
+        #print(sorted_sites[round(0.98*len(sorted_sites))] / rough_t_ctrl)
+        for site in ctrl:
+            #print(ctrl[site])
+            #if a site is in the top 10%
+            if ctrl[site][0] > sorted_sites[round(percentile*len(sorted_sites))]: #rough_t_ctrl * 0.5:
+                imp_nodes.append(site)
+        
+        rough_t_ctrl = ctrl[0][2]
+        
+        for i in range(1, num_tests):
+            filename = str(files[file_ind+i])[:-4]
+            test_data = open_data(filename)
+            rough_t = test_data[0][2]
+            test_name = filename.split("_")[8]
+            #print(test_name)
+            #print(test_data[0][0])
+        
+            #add in any others
+            if len(imp_nodes) > 1:
+                #we'll have tp make a function that gets the nearest higher power of two (i.e, possible max time)
+                sp_pval, r_sq, sp_rho, wass, jens = spearman_compare_memsafe_diff(ctrl, test_data, L*L, rough_t_ctrl, rough_t, title=f"{L}x{L} ctrl v.s. {test_name}: seed={seed}", wass_out = True, jensen_out = True, important_nodes = imp_nodes, verbose=False, show_fig=False)
+                #sp_pval, r_sq, sp_rho_st, wass_st, jens_st = spearman_compare_memsafe_diff(ctrl, st, L*L, rough_t_ctrl, rough_t_st, title=f"{L}x{L} ctrl v.s. st: seed={seed}", wass_out = True, jensen_out = True, important_nodes = imp_nodes, verbose=False, show_fig=False)
+                #sp_pval, r_sq, sp_rho_sm, wass_smds, jens_smds = spearman_compare_memsafe_diff(ctrl, smds, L*L, rough_t_ctrl, rough_t_smds, title=f"{L}x{L} ctrl v.s. smds: seed={seed}", wass_out = True, jensen_out = True, important_nodes = imp_nodes, verbose=False, show_fig=False)
+                
+                #vis_clusters(G, L, "lattice", f"{L}x{L} clusters: seed={seed_num}")
+                
+                #vis_lat_advanced_memsafe(ctrl, L*L, rough_t_ctrl, "lattice", [L, L], f"{L}x{L} ctrl: seed={seed_num}", nodes_to_highlight=imp_nodes)
+                #vis_lat_advanced_memsafe(sdrg, L*L, rough_t_sdrg, "lattice", [L, L], f"{L}x{L} sdrg: seed={seed_num}", nodes_to_highlight=imp_nodes)
+                #vis_lat_advanced_memsafe(smds, L*L, rough_t_smds, "lattice", [L, L], f"{L}x{L} smds: seed={seed_num}", nodes_to_highlight=imp_nodes)
+                #print(f"-- {seed_num} --")
+                #print(f"{rough_t_ctrl}\t{rough_t_sdrg}\t{rough_t_smds}")
+                #print(f"{sp_rho_sd}\t{sp_rho_sm}")
+                #print(f"{round(jens, 3)}", end="\t")
+                
+                if jens == 0:
+                    jens = 100
+                    print(test_name)
+                
+                test_datas[i].append(jens)
+                #sdrg_data.append(jens_sdrg)
+                #smds_data.append(jens_smds)
+                #st_data.append(jens_st)
+                #print(f"{wass_sdrg}\t{wass_smds}")
+        print("--")
+        
+    
+    #print(sdrg_data)
+    for i in range(num_tests):
+        sns.histplot(test_datas[i], bins=bins, color=colors[i], label=names[i], alpha=0.4, element="step")
+    #sns.histplot(smds_data, bins=bins, color="orange", label="SMDS", alpha=0.4, element="step")
+    
+    # 4. Finalize the chart details
+    plt.xlabel(f"Wasserstein Distance - Most Active {(1-percentile)*100}%")
+    plt.ylabel("Frequency")
+    plt.title("Quasistationary Wasserstein Distance from Control")
+    plt.legend(loc="upper right")
+    
+    plt.show()
+         
+
 #C:\Users\zidda\Documents\Summer 26 Research\SDRG_Sparsification_py\sdrg_sparsification\data_files\L32_pickles\L32x32_s12806_control_backbone_test.pkl
 
 #test11(4, 1)
-       
+#test_sdrg_backbone(16)
 #for i in range(3):
     #print(f"starting test number {i}")
     #print(f"{time.localtime()[3]}hrs : {time.localtime()[4]}m : {time.localtime()[5]}s")

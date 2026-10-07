@@ -140,6 +140,9 @@ def generate_square_lattice(width, height, torus = True, visualize_on=False, dis
     # these are stored as n123_e(34,42)_n53_ ..., with contributing nodes denoted n, and contributing edges denoted e
     mu_components = G.attachNodeAttribute("mu_comp", str)
     lambda_components = G.attachEdgeAttribute("lambda_comp", str)
+    infection_progenitor = G.attachNodeAttribute("inf_prog", int)
+    for site in G.iterNodes():
+        infection_progenitor[site] = site
     
     #add disorder to healing values too if desired
     if critical:
@@ -190,6 +193,269 @@ def generate_square_lattice(width, height, torus = True, visualize_on=False, dis
         
     return G
 
+def generate_random_graph(N, avg_degree, degree_stdev, disorder_alpha = 4, viz=False):
+    
+    G = nk.graph.Graph(n=N, weighted = True, edgesIndexed=True)
+    
+    #init activity values (infected/healed)
+    is_active = G.attachNodeAttribute("active", int)
+    infection_progenitor = G.attachNodeAttribute("inf_prog", int)
+    for site in G.iterNodes():
+        infection_progenitor[site] = site
+    #init mu values
+    healing_factor = G.attachNodeAttribute("mu", float)
+    
+    #node & edge components have the *like* components that have merged to form any given edge
+    components = G.attachNodeAttribute("components", str)  #like "12_53_25_65"
+    edge_components = G.attachEdgeAttribute("e_comp", str) #like "(12,53)_(25,65)"
+    
+    #mu & lambda components have *all* components that have contributed to the mu or lambda values of a node/edge, respectively
+    # these are stored as n123_e(34,42)_n53_ ..., with contributing nodes denoted n, and contributing edges denoted e
+    mu_components = G.attachNodeAttribute("mu_comp", str)
+    lambda_components = G.attachEdgeAttribute("lambda_comp", str)
+    
+    for site in G.iterNodes():
+        num_edges = max(scipy.stats.norm.rvs(size=1, loc=avg_degree, scale=degree_stdev)[0], 1)
+        set_of_other_sites = set([node for node in G.iterNodes()]) - {site}
+        
+        healing_factor[site] = np.random.random()*avg_degree
+        is_active[site] = 0
+        components[site] = f"{site}"
+        mu_components[site] = f"n{site}"
+        
+        for edge in range(round(num_edges)):
+            
+            #it's possible to choose a number greater than the total number of sites; 
+            # this prevents that from breaking things
+            if len(set_of_other_sites) > 0:
+                lambda_val = scipy.stats.powerlaw.rvs(disorder_alpha, size=1)[0]
+                
+                other_site = np.random.choice(tuple(set_of_other_sites))
+                #print(f"{site} - {other_site}")
+                G.addEdge(site, other_site, lambda_val)
+                
+                set_of_other_sites = set_of_other_sites - {other_site}
+    
+    G.removeMultiEdges()
+    for edge in G.iterEdges():
+        #edge = (site, other_site)
+        eid = G.edgeId(edge[0], edge[1])
+        edge_components[eid] = f"{edge}"
+        lambda_components[eid] = f"e({edge[0]},{edge[1]})"
+    
+    
+    
+    
+    
+    G.indexEdges()
+        
+    if viz:
+        visualize(G)
+    
+    return G
+
+
+def generate_erdos_renyi(N, E, disorder_alpha = 4, viz=False):
+    
+    G = nk.graph.Graph(n=N, weighted = True, edgesIndexed=True)
+    
+    #init activity values (infected/healed)
+    is_active = G.attachNodeAttribute("active", int)
+    infection_progenitor = G.attachNodeAttribute("inf_prog", int)
+    for site in G.iterNodes():
+        infection_progenitor[site] = site
+    #init mu values
+    healing_factor = G.attachNodeAttribute("mu", float)
+    
+    #node & edge components have the *like* components that have merged to form any given edge
+    components = G.attachNodeAttribute("components", str)  #like "12_53_25_65"
+    edge_components = G.attachEdgeAttribute("e_comp", str) #like "(12,53)_(25,65)"
+    
+    #mu & lambda components have *all* components that have contributed to the mu or lambda values of a node/edge, respectively
+    # these are stored as n123_e(34,42)_n53_ ..., with contributing nodes denoted n, and contributing edges denoted e
+    mu_components = G.attachNodeAttribute("mu_comp", str)
+    lambda_components = G.attachEdgeAttribute("lambda_comp", str)
+    
+    if E > (N*(N-1))/2:
+        print("given number of edges is too high! returning set of vertices")
+        return G
+    
+    for i in range(E):
+        u=0
+        v=0
+        num_tries = 0
+        while u == v or G.weight(u, v) > 0:
+            #rechoose v until we get a valid edge that doesn't yet exist
+            u = np.random.randint(0, N)
+            v = np.random.randint(0, N)
+            num_tries+=1
+            if num_tries > E:
+                print("could not find a valid new edge to add. returning partial graph")
+                return G
+        lambda_val = scipy.stats.powerlaw.rvs(disorder_alpha, size=1)[0]
+        
+        G.addEdge(u, v, lambda_val)
+    
+    for site in G.iterNodes():
+        #using the factor of E/N brings us closer to critical point
+        healing_factor[site] = np.random.random()*(E/N)
+        is_active[site] = 0
+        components[site] = f"{site}"
+        mu_components[site] = f"n{site}"
+        
+
+    #G.removeMultiEdges()
+    for edge in G.iterEdges():
+        #edge = (site, other_site)
+        eid = G.edgeId(edge[0], edge[1])
+        edge_components[eid] = f"{edge}"
+        lambda_components[eid] = f"e({edge[0]},{edge[1]})"
+    
+    
+    
+    
+    
+    G.indexEdges()
+        
+    if viz:
+        visualize(G)
+    
+    return G
+       
+
+def generate_BA(N, E, viz=False):
+    k = E/(N-1)
+    print(k)
+    bag = nk.generators.BarabasiAlbertGenerator(k, N)
+    
+    # Run algorithm
+    G = bag.generate()
+    G.indexEdges()
+    G = nk.graphtools.toWeighted(G)
+    #init activity values (infected/healed)
+    is_active = G.attachNodeAttribute("active", int)
+    infection_progenitor = G.attachNodeAttribute("inf_prog", int)
+    for site in G.iterNodes():
+        infection_progenitor[site] = site
+    #init mu values
+    healing_factor = G.attachNodeAttribute("mu", float)
+    
+    #node & edge components have the *like* components that have merged to form any given edge
+    components = G.attachNodeAttribute("components", str)  #like "12_53_25_65"
+    edge_components = G.attachEdgeAttribute("e_comp", str) #like "(12,53)_(25,65)"
+    
+    #mu & lambda components have *all* components that have contributed to the mu or lambda values of a node/edge, respectively
+    # these are stored as n123_e(34,42)_n53_ ..., with contributing nodes denoted n, and contributing edges denoted e
+    mu_components = G.attachNodeAttribute("mu_comp", str)
+    lambda_components = G.attachEdgeAttribute("lambda_comp", str)
+    
+    
+    for site in G.iterNodes():
+        #using the factor of E/N brings us closer to critical point
+        healing_factor[site] = np.random.random()*(E/N)
+        is_active[site] = 0
+        components[site] = f"{site}"
+        mu_components[site] = f"n{site}"
+    
+    for edge in G.iterEdges():
+        #edge = (site, other_site)
+        eid = G.edgeId(edge[0], edge[1])
+        edge_components[eid] = f"{edge}"
+        lambda_components[eid] = f"e({edge[0]},{edge[1]})"
+    G.removeSelfLoops()
+    if viz:
+        visualize(G)
+    
+    return G
+    
+
+
+def generate_watts_strogatz(N, E, beta, disorder_alpha = 4, viz=False):
+    """
+    generates a watts-strogatz random graph
+
+    """
+    
+    
+    
+    G = nk.graph.Graph(n=N, weighted = True, edgesIndexed=True)
+    
+    #init activity values (infected/healed)
+    is_active = G.attachNodeAttribute("active", int)
+    infection_progenitor = G.attachNodeAttribute("inf_prog", int)
+    for site in G.iterNodes():
+        infection_progenitor[site] = site
+    #init mu values
+    healing_factor = G.attachNodeAttribute("mu", float)
+    
+    #node & edge components have the *like* components that have merged to form any given edge
+    components = G.attachNodeAttribute("components", str)  #like "12_53_25_65"
+    edge_components = G.attachEdgeAttribute("e_comp", str) #like "(12,53)_(25,65)"
+    
+    #mu & lambda components have *all* components that have contributed to the mu or lambda values of a node/edge, respectively
+    # these are stored as n123_e(34,42)_n53_ ..., with contributing nodes denoted n, and contributing edges denoted e
+    mu_components = G.attachNodeAttribute("mu_comp", str)
+    lambda_components = G.attachEdgeAttribute("lambda_comp", str)
+    
+    K = round(2*E/N)
+    
+    #first make sure K is even
+    if K % 2 == 1:
+        K+=1
+    
+    print(K)
+    
+    #First construct simple ring
+    for x in range(1, N):
+        G.addEdge(x, x - 1)
+    G.addEdge(0, N-1)
+    
+    #add in neighbor connections to form ring lattice
+    for site in G.iterNodes():
+        for i in range(1, K//2):
+            G.addEdge(site, (site+i)%N)
+            #G.addEdge(site, site-i)
+    G.removeMultiEdges()
+    for site in G.iterNodes():
+        for j in range(site+1, (site+(K//2))%N):
+            #visualize(G)
+            if np.random.random() < beta:
+                k=-1
+                while k == -1 or k == site:
+                    k = np.random.randint(0, N)
+                #print(f"{site}, {j%N}")
+                G.removeEdge(site, j%N)
+                G.addEdge(site, k)
+    G.removeMultiEdges()
+    for site in G.iterNodes():
+        #using the factor of E/N brings us closer to critical point
+        healing_factor[site] = np.random.random()*(E/N)
+        is_active[site] = 0
+        components[site] = f"{site}"
+        mu_components[site] = f"n{site}"
+        
+    G.removeMultiEdges()
+    for edge in G.iterEdges():
+        lambda_val = scipy.stats.powerlaw.rvs(disorder_alpha, size=1)[0]
+        G.setWeight(edge[0], edge[1], lambda_val)
+        #edge = (site, other_site)
+        eid = G.edgeId(edge[0], edge[1])
+        edge_components[eid] = f"{edge}"
+        lambda_components[eid] = f"e({edge[0]},{edge[1]})"
+    
+    
+    
+    
+    
+    #G.indexEdges()
+        
+    if viz:
+        visualize(G)
+    
+    return G
+       
+
+
 def gen_with_seed(L, seed):
     np.random.seed(seed)
     G = generate_square_lattice(L, L)
@@ -219,7 +485,9 @@ def generate_complete(n, visualize_on=False, disorder_alpha = 1):
     
     #init activity values (infected)
     is_active = G.attachNodeAttribute("active", int)
-    
+    infection_progenitor = G.attachNodeAttribute("inf_prog", int)
+    for site in G.iterNodes():
+        infection_progenitor[site] = site
     #init mu values
     healing_factor = G.attachNodeAttribute("mu", float)
     
@@ -367,7 +635,9 @@ def generate_chain(length, loop = True, visualize_on=False, disordered_mu = True
     
     #init activity values (infected)
     is_active = G.attachNodeAttribute("active", int)
-    
+    infection_progenitor = G.attachNodeAttribute("inf_prog", int)
+    for site in G.iterNodes():
+        infection_progenitor[site] = site
     #init mu values
     healing_factor = G.attachNodeAttribute("mu", float)
     components = G.attachNodeAttribute("components", str)
@@ -968,6 +1238,14 @@ def max_susceptibility_crit_point_estimation(G_in, min_mu, max_mu, steps, averag
         chi_arr.append(chi)
         mu_arr.append(i)
         
+        
+    if max(chi_arr) == chi_arr[-1]:
+        print("could not find maximum of susceptibility! increase your max_mu value to get a more accurate estimate")
+        return max_mu
+    if max(chi_arr) == chi_arr[0]:
+        print("could not find maximum of susceptibility! lower your min_mu value to get a more accurate estimate")
+        return min_mu
+    
     lower_chi_max_bound = mu_arr[np.argmax(chi_arr)-1]
     upper_chi_max_bound = mu_arr[np.argmax(chi_arr)+1]
     
@@ -1023,7 +1301,7 @@ def get_chi(G):
 ######### FUNDAMENTAL STEP
 
 
-def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, decimation_log = [], sparsify_mode = False, sparsify_log = [], partial=False, partial_set=set(), keep_connected=False, keep_connected_set=set(), kawashima_filtering=True, local_maxima_filtering=False, modified_maximum_rule=False, step=0, visualizeStep = False, verbose=True):
+def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, decimation_log = [], sparsify_mode = False, sparsify_log = [], partial=False, partial_dict=dict(), output_energy_clusters = False, energy_clusters=set(), keep_connected=False, keep_connected_set=set(), kawashima_filtering=True, local_maxima_filtering=False, modified_maximum_rule=False, step=0, visualizeStep = False, verbose=True):
     """This method does a single iteration of the SDRG sparsification. 
         - G: This is a networkit graph. It should be fully-connected/only contain one component, and needs to have edge weights + mu values (healing factor) + components (initialized with each node's own index)
         - neil_mode: Neil has a sparsification algorithm that outputs, at the end, all of the decimated clusters. This toggle just changes to output to this for checking the sdrg results against his
@@ -1033,6 +1311,8 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
         - sparsify_log: this contains all of the edges which were components of sites that were decimated
         - visualizeStep: visualizes the network AFTER applying the sdrg step using networkx. This gets reeeaaaalllllyyyy slow above like a hundred nodes or so
         - keep_connected: If true, this adds the components of the strongest coupling of each decimated site to the sparsification log when it gets decimated. This guarantees that the cluster represented by the site never becomes isolated/forms a new component when the graph is rebuilt.
+        - energy_clusters: this tracks the energy clusters; ie, every time a site is decimated it outputs the set of mu_components that comprised the site's transverse field/mu value
+    
     """
     t0 = time.time_ns()
     edge_components = G.getEdgeAttribute("e_comp", str)
@@ -1049,19 +1329,20 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
         last_site = [u for u in G.iterNodes()]
 
         decimated_sites = np.append(decimated_sites, components[last_site[0]])
-        
-        if sparsify_mode and not partial and not keep_connected:
+        if output_energy_clusters:
+            return G, energy_clusters
+        elif sparsify_mode and not partial and not keep_connected:
             return G, sparsify_log
         elif sparsify_mode and partial and keep_connected:
-            return G, sparsify_log, partial_set, keep_connected_set
+            return G, sparsify_log, partial_dict, keep_connected_set
         elif sparsify_mode and not partial and keep_connected:
             return G, sparsify_log, keep_connected_set
         elif sparsify_mode and partial:
-            return G, sparsify_log, partial_set, set()
+            return G, sparsify_log, partial_dict, set()
         elif logging_toggle and not partial:
             return G, decimation_log
         elif logging_toggle and partial:
-            return G, decimation_log, partial_set
+            return G, decimation_log, partial_dict
         
         elif neil_mode:
             return G, decimated_sites
@@ -1169,12 +1450,13 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
                 J_ui = G.weight(u, neighbor)
                 J_vi = G.weight(v, neighbor)
                 
-                if J_ui > 1e-322 or J_vi > 1e-322:
+                if J_ui > 0 or J_vi > 0:
                     #sometimes weird shit happens when an edge has ultra-low weight. We just avoid these edges
                     ratio = 0
-                    if J_ui > 1e-322 and J_vi > 1e-322:
-                        ratio = abs(J_ui/J_vi)
-                    if ratio > 2:
+                    """if J_ui > 1e-322 and J_vi > 1e-322:
+                        ratio = abs(J_ui/J_vi)"""
+                    
+                    if (J_ui > J_vi*2) or (J_vi > J_ui*2):
                         new_edge_weight = max(J_ui, J_vi)
                     else:
                         new_edge_weight = J_ui + J_vi
@@ -1218,12 +1500,17 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
                                 #print(get_list_of_edge_components(G, vneid))
                                 edge_comp_list = get_list_of_edge_components(G, vneid)
                                 for i in edge_comp_list:
-                                    #add the edge, the energy scale/omega value when it was decimated, and the value of the edge itself
-                                    partial_set.add((i, omega, J_vi))
+                                    #add to the edge's entry in the dict: the energy scale/omega value when it was decimated, the weight of the edge itself, and the multiplicity of the edge
+                                    if omega < partial_dict[i][0]:
+                                        partial_dict[i] = [omega, J_vi, partial_dict[i][2] + 1]
+                                    
+                                    #partial_set.add((i, omega, J_vi))
                             else:
                                 edge_comp_list = get_list_of_edge_components(G, uneid)
                                 for i in edge_comp_list:
-                                    partial_set.add((i, omega, J_ui))
+                                    if omega < partial_dict[i][0]:
+                                        partial_dict[i] = [omega, J_ui, partial_dict[i][2] + 1]
+                                    #partial_set.add((i, omega, J_ui))
                                 #decimation_log.append((u,neighbor))
                     elif J_ui + J_vi == new_edge_weight and J_ui != new_edge_weight and J_vi != new_edge_weight:
                         uneid = G.edgeId(u, neighbor)
@@ -1241,6 +1528,27 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
                         else:
                             print("Something very strange has happened...")
                 else:
+                    
+                    """if G.hasEdge(u, neighbor):
+                        uneid = G.edgeId(u, neighbor)
+                        
+                        edge_comp_list = get_list_of_edge_components(G, uneid)
+                        for i in edge_comp_list:
+                            if omega < partial_dict[i][0]:
+                                partial_dict[i] = [omega, J_ui, partial_dict[i][2] + 1]
+                        G.removeEdge(u, neighbor)
+                    if G.hasEdge(v, neighbor):
+                        vneid = G.edgeId(v, neighbor)
+                        
+                        edge_comp_list = get_list_of_edge_components(G, vneid)
+                        for i in edge_comp_list:
+                            if omega < partial_dict[i][0]:
+                                partial_dict[i] = [omega, J_vi, partial_dict[i][2] + 1]
+                        G.removeEdge(v, neighbor)"""
+                    #remove_edge_safe(G, u, neighbor)
+                    #remove_edge_safe(G, v, neighbor)
+                    #G.removeEdge(u, neighbor)
+                    #G.removeEdge(v, neighbor)
                     print("encountered an ultra low weight edge. Did nothing to it")
                                     
             #remove nodes at end. We had to wait b/c otherwise we can't calculate weights in loop
@@ -1251,6 +1559,11 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
             #print()
             
         else: #true iff biggest val is a mu
+            #print("--")
+            
+            
+            
+            t0 = time.time_ns()
             step_to_print_after = 125    
             if step > step_to_print_after:
                 print("---")
@@ -1262,6 +1575,9 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
             #build a set with all of the neighbors
             #print(mu_components[site_to_decimate])
             sparsify_log.append(mu_components[site_to_decimate])
+            
+            if output_energy_clusters:
+                energy_clusters.add(mu_components[site_to_decimate])
             
             if keep_connected and G.numberOfNodes() > 1:
                 #print(list(G.iterNeighborsWeights(site_to_decimate)))
@@ -1283,6 +1599,10 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
                     #print(f"{lambda_components[eid]}  -- {mu_components[site_to_decimate]} -- {site_to_decimate}, {strongly_connected_neighbor}")
                     #print(f"keeping edge btwn {site_to_decimate} and {strongly_connected_neighbor}")
             #print(omega)
+            
+            #print(f"0: {(time.time_ns()-t0)/1000000000}")
+            #t0 = time.time_ns()
+            
             neighborhood = {u for u in G.iterNeighbors(site_to_decimate)}
             #print(len(neighborhood))
             #I've forgotten why I did this, it seems kind of stupid but I don't really want to bother changing it right now. 
@@ -1297,26 +1617,39 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
                 
                 edge_comp_list = get_list_of_edge_components(G, neid)
                 for i in edge_comp_list:
-                    partial_set.add((i, omega, G.weight(neighbor, site_to_decimate)))
+                    if omega < partial_dict[i][0]:
+                        partial_dict[i] = [omega, G.weight(neighbor, site_to_decimate), partial_dict[i][2] + 1]
+                    #partial_set.add((i, omega, G.weight(neighbor, site_to_decimate)))
             
             if step > step_to_print_after:
                 print((time.time_ns()-t0)/1000000000)
                 t0 = time.time_ns()
             #print(len(neighborhood))
             #print(f"inloop-{site_to_decimate}")
+            
+            #print(f"1: {(time.time_ns()-t0)/1000000000}")
+            
+            
             new_edges = set()
-            num_ops = 0
+            #num_ops = 0
+            #print(len(neighborhood))
+            num_ops0=0
+            #for i in range(len(neighborhood)):
+                #num_ops0 += i
+                
+            #print(num_ops0)
+            #t0 = time.time_ns()
             for neighbor in neighborhood:
                 s = neighborhood - neighbors_checked # s is the set of unchecked neighbors. For high-degree networks this will be a significant speedup but probably not so for lattices
                 s.remove(neighbor) #because we've already checked it. Also prevents a single neighbor from being double-counted
                 if s: #... has any elements
                     for other_neighbor in s:
-                        
+                        #t0 = time.time_ns()
                         if step > step_to_print_after:
                             print("-")
                             print((time.time_ns()-t0)/1000000000)
                             t0 = time.time_ns()
-                        num_ops+=1
+                        #num_ops+=1
                         # before change to sets it was this: np.delete(neighborhood, neighbor).delete(neighbors_checked): 
                         # i = decimated site 
                         # j, k = neighbors
@@ -1347,6 +1680,8 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
                         if step > step_to_print_after:
                             print((time.time_ns()-t0)/1000000000)
                             t0 = time.time_ns()
+                        #print(f"1.1: {(time.time_ns()-t0)/1000000000}")
+                        #t0 = time.time_ns()
                         if partial and J_jk > 0:
                             #J_jk > 0 means that there is already a connection between neighbor and other_neighbor, so maximum rule will apply
                             #print("partial log adding a new edge ...")
@@ -1356,16 +1691,26 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
                                 ujeid = G.edgeId(site_to_decimate, neighbor)
                                 #visualize(G)
                                 #print(f"std = {site_to_decimate}, n = {neighbor}, on = {other_neighbor}")
+                                #print(f"1.1.0: {(time.time_ns()-t0)/1000000000}")
+                                #t0 = time.time_ns()
                                 edge_comp_list_ui = get_list_of_edge_components(G, uieid)
+                                #print(edge_comp_list_ui)
                                 edge_comp_list_uj = get_list_of_edge_components(G, ujeid)
                                 #print(f"l1= {len(edge_comp_list_ui) + len(edge_comp_list_uj)}")
-    
+                                #print(f"1.1.1: {(time.time_ns()-t0)/1000000000}")
+                                #t0 = time.time_ns()
                                 for i in edge_comp_list_ui:
                                     #add the edge, the energy scale/omega value when it was decimated, and the value of the edge itself
-                                    partial_set.add((i, omega, G.weight(site_to_decimate, other_neighbor)))
+                                    if omega < partial_dict[i][0]:
+                                        partial_dict[i] = [omega, G.weight(site_to_decimate, other_neighbor), partial_dict[i][2] + 1]
+                                    #partial_set.add((i, omega, G.weight(site_to_decimate, other_neighbor)))
                                 for i in edge_comp_list_uj:
                                     #add the edge, the energy scale/omega value when it was decimated, and the value of the edge itself
-                                    partial_set.add((i, omega, G.weight(site_to_decimate, neighbor)))
+                                    if omega < partial_dict[i][0]:
+                                        partial_dict[i] = [omega, G.weight(site_to_decimate, neighbor), partial_dict[i][2] + 1]
+                                    #partial_set.add((i, omega, G.weight(site_to_decimate, neighbor)))
+                                #print(f"1.1.2: {(time.time_ns()-t0)/1000000000}")
+                                #t0 = time.time_ns()
                             else:
                                 #if lambda_ui*lambda_uj/mu_u, then J_jk gets decimated
                                 jkeid = G.edgeId(neighbor, other_neighbor)
@@ -1373,7 +1718,13 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
                                 edge_comp_list = get_list_of_edge_components(G, jkeid)
                                 #print(f"l2= {len(edge_comp_list)}")
                                 for i in edge_comp_list:
-                                    partial_set.add((i, omega, J_jk))
+                                    if omega < partial_dict[i][0]:
+                                        partial_dict[i] = [omega, J_jk, partial_dict[i][2] + 1]
+                                    #partial_set.add((i, omega, J_jk))
+                                #print(f"1.1.1--: {(time.time_ns()-t0)/1000000000}")
+                                #t0 = time.time_ns()
+                        #print(f"1.2: {(time.time_ns()-t0)/1000000000}")
+                        #t0 = time.time_ns()
                         if step > step_to_print_after:
                             print(f"m...{(time.time_ns()-t0)/1000000000}" )
                             t0 = time.time_ns()
@@ -1407,6 +1758,8 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
                                 edge_components[(noneid)] = f"{edge_components[stdneid]}_{edge_components[stdoneid]}"
                             #print(len(edge_components[(noneid)]))
                             #print(len(f"{edge_components[stdneid]}_{edge_components[stdoneid]}".split("_")))
+                        #print(f"1.3: {(time.time_ns()-t0)/1000000000}")
+                        #t0 = time.time_ns()
                         if step > step_to_print_after:
                             print((time.time_ns()-t0)/1000000000)
                             t0 = time.time_ns()
@@ -1416,46 +1769,112 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
                         if step > step_to_print_after:
                             print((time.time_ns()-t0)/1000000000)
                             t0 = time.time_ns()
-                        
+                        #print(f"1.4: {(time.time_ns()-t0)/1000000000}")
+                        #t0 = time.time_ns()
                 #The neighbor that just looped through all of the other neighbors will
                 # have had all of its connections made and calculated, so no reason to 
                 # do anything to it for the rest of the loop. This just preserves the 
                 # action done in the line with s.remove(neighbor) for future loops
                 neighbors_checked.add(neighbor)
             
-            if kawashima_filtering:
+            #print(num_ops)
+            #print(f"2: {(time.time_ns()-t0)/1000000000}")
+            #print(f"2.1: {((time.time_ns()-t0)/1000000000)/num_ops0}")
+            #t0 = time.time_ns()
+            
+            if kawashima_filtering and partial:
+                #we modify the kawashima filtering so that we only filter out edges connected to local maxima when doing a partial sparsification
                 #loop through every newly-generated edge
                 for edge in new_edges:
                     # a majorating triangle is formed when, for an edge (i,j) there exists a site k s.t. ln(J_ij) < ln(J_ik); ln(J_ij) < ln(J_jk); and ln(J_ij) < ln(J_ik) + ln(J_jk) - ln(h_k)
+                    
                     i = edge[0]
                     j = edge[1]
                     #print(f"on edge {i}, {j}")
                     
                     J_ij = G.weight(i,j)
+                    
+                    #print(get_list_of_edge_components(G, eid))
+                    #print(eid)
+                    if J_ij > 0:
+                                       
+                        # & gives an intersection of sets; pair_neighborhood has site which neighbor both i and j
+                        pair_neighborhood = set([k for k in G.iterNeighbors(i)]) & set([k for k in G.iterNeighbors(j)])
+
+                        #for each one, check whether it forms a majorating triangle with any of the neighbors of the site_to_decimate
+                        for site in pair_neighborhood:
+                            J_ik = G.weight(i,site)
+                            J_jk = G.weight(j,site)
+    
+                            #we could combine this and the next if into one, but this helps readability and also
+                            # acts as a sort of "short-circuit" like in matlab b/c many edges will fail this test
+                            if J_ij < J_jk and J_ij < J_ik and J_ij < (J_jk*J_ik)/healing_factor[site]:
+                                #comps = get_list_of_edge_components(G, G.edgeId(i, j))
+                                #for 
+                                greater_site = i if healing_factor[i] > healing_factor[j] else j
+                                
+                                #this if is fulfilled iff the greater of the two sites i,j, is a local maximum
+                                
+                                if healing_factor[greater_site] > max([weight[1] for weight in G.iterNeighborsWeights(greater_site)]):
                                     
-                    pair_neighborhood = set([k for k in G.iterNeighbors(i)]) & set([k for k in G.iterNeighbors(j)])
-                    #print(pair_neighborhood)
-                    #for each one, check whether it forms a majorating triangle with any of the neighbors of the site_to_decimate
-                    for site in pair_neighborhood:
-                        J_ik = G.weight(i,site)
-                        J_jk = G.weight(j,site)
-                        #Though very rare, it's possible that a J value is small enough that math.log(J) throws a domain error even though the edge technically exists. This avoids those errors.
-                        if J_jk > 1e-320 and J_ik > 1e-320 and J_ij > 1e-320 and healing_factor[site] > 1e-320:
-                            if ln(J_ij) < ln(J_jk) and ln(J_ij) < ln(J_ik) and ln(J_ij) < ln(J_jk) + ln(J_ik) - ln(healing_factor[site]):
-                                #if so, delete it and break
-                                #print(f"removing edge between {i} and {j}")
+                                    eid = G.edgeId(i, j)
+                                    
+                                    edge_comp_list = get_list_of_edge_components(G, eid)
+                                    
+                                    for val in edge_comp_list:
+                                        #add the edge, the energy scale/omega value when it was decimated, and the value of the edge itself
+                                        if healing_factor[greater_site] < partial_dict[val][0]:
+                                            partial_dict[val] = [healing_factor[greater_site], J_ij, partial_dict[val][2] + 1]
+                                        #partial_set.add((i, omega, G.weight(site_to_decimate, other_neighbor)))
+                                    
+                                    G.removeEdge(i,j)
+                                    break
+                            """
+                            if J_jk > 1e-320 and J_ik > 1e-320 and J_ij > 1e-320 and healing_factor[site] > 1e-320:
+                                if ln(J_ij) < ln(J_jk) and ln(J_ij) < ln(J_ik) and ln(J_ij) < ln(J_jk) + ln(J_ik) - ln(healing_factor[site]):
+                                    #if so, delete it and break
+                                    #print(f"removing edge between {i} and {j}")
+                                    G.removeEdge(i,j)
+                                    break
+                            elif J_jk < 1e-320 or J_ik < 1e-320 and J_ij > 1e-320:
+                                G.removeEdge(i,j)
+                                break"""
+                            #We don't need an else b/c any J_jk or J_ik value small enough to throw an error is too small to be greater than ln(J_ij)
+                            #it's technically possible for J_ij to be super small too but I think it will probably never happen
+                            #re the above comment; it DOES sometimes happen. 
+            elif kawashima_filtering:
+                #we modify the kawashima filtering so that we only filter out edges
+                #loop through every newly-generated edge
+                for edge in new_edges:
+                    # a majorating triangle is formed when, for an edge (i,j) there exists a site k s.t. ln(J_ij) < ln(J_ik); ln(J_ij) < ln(J_jk); and ln(J_ij) < ln(J_ik) + ln(J_jk) - ln(h_k)
+                    
+                    i = edge[0]
+                    j = edge[1]
+                    #print(f"on edge {i}, {j}")
+                    
+                    J_ij = G.weight(i,j)
+                    
+                    #print(get_list_of_edge_components(G, eid))
+                    #print(eid)
+                    if J_ij > 0:
+                                       
+                        # & gives an intersection of sets; pair_neighborhood has site which neighbor both i and j
+                        pair_neighborhood = set([k for k in G.iterNeighbors(i)]) & set([k for k in G.iterNeighbors(j)])
+
+                        #for each one, check whether it forms a majorating triangle with any of the neighbors of the site_to_decimate
+                        for site in pair_neighborhood:
+                            J_ik = G.weight(i,site)
+                            J_jk = G.weight(j,site)
+    
+                            if J_ij < J_jk and J_ij < J_ik and J_ij < (J_jk*J_ik)/healing_factor[site]:
+                                #comps = get_list_of_edge_components(G, G.edgeId(i, j))
+                                #for 
                                 G.removeEdge(i,j)
                                 break
-                        elif J_jk < 1e-320 or J_ik < 1e-320 and J_ij > 1e-320:
-                            G.removeEdge(i,j)
-                            break
-                        #We don't need an else b/c any J_jk or J_ik value small enough to throw an error is too small to be greater than ln(J_ij)
-                        #it's technically possible for J_ij to be super small too but I think it will probably never happen
-                        #re the above comment; it DOES sometimes happen. 
                 
             #print(num_ops)
             #print((time.time_ns()-t0)/1000000000)
-            t0 = time.time_ns()
+            #t0 = time.time_ns()
             decimated_sites = np.append(decimated_sites, components[site_to_decimate])
             #print(f"decimated site {site_to_decimate} with components {components[site_to_decimate]}")
             if logging_toggle:
@@ -1476,18 +1895,20 @@ def sdrg_step(G, neil_mode = False, decimated_sites=[], logging_toggle = True, d
     #nk.graphio.writeGraph(G, f"network_{time.time_ns()}_T.gml", nk.Format.GML)
     if visualizeStep:
         visualize(G)
-    if sparsify_mode and not partial and not keep_connected:
+    if output_energy_clusters:
+        return G, energy_clusters
+    elif sparsify_mode and not partial and not keep_connected:
         return G, sparsify_log
     elif sparsify_mode and partial and keep_connected:
-        return G, sparsify_log, partial_set, keep_connected_set
+        return G, sparsify_log, partial_dict, keep_connected_set
     elif sparsify_mode and not partial and keep_connected:
         return G, sparsify_log, keep_connected_set
     elif sparsify_mode and partial:
-        return G, sparsify_log, partial_set, set()
+        return G, sparsify_log, partial_dict, set()
     elif logging_toggle and not partial:
         return G, decimation_log
     elif logging_toggle and partial:
-        return G, decimation_log, partial_set
+        return G, decimation_log, partial_dict
     
     elif neil_mode:
         return G, decimated_sites
@@ -1780,7 +2201,7 @@ def sdrg_to_completion(G, visualizeSteps = False, verbose=False, kawashima = Tru
 def sdrg_partial(G, visualizeSteps = False, verbose=False, keep_connected = True, use_kawashima=False, use_local_max_filtering=False, fully_sparse = False):
     if not fully_sparse:
         sparsify_log = []
-        partial_set=set()
+        partial_dict=dict([((u, v), [0, 0, 0]) for u,v in G.iterEdges()]) # stored as {edgeId: [omega_decimated_at, weight, multiplicity]}
         keep_connected_set=set()
         num_nodes_originally = G.numberOfNodes()
         for i in range(G.numberOfNodes()):
@@ -1790,7 +2211,7 @@ def sdrg_partial(G, visualizeSteps = False, verbose=False, keep_connected = True
                 logging_toggle = False, 
                 sparsify_mode=True, 
                 sparsify_log=sparsify_log, 
-                partial_set=partial_set, 
+                partial_dict=partial_dict, 
                 visualizeStep=False, 
                 keep_connected=keep_connected, 
                 keep_connected_set=keep_connected_set, 
@@ -1807,10 +2228,12 @@ def sdrg_partial(G, visualizeSteps = False, verbose=False, keep_connected = True
         
         print("--------------------------")
             
-        return G, sparsify_log, partial_set, keep_connected_set
+        #partial_set = set([(edge, partial_dict[edge][0], partial_dict[edge][1]) for edge in partial_dict])
+        
+        return G, sparsify_log, partial_dict, keep_connected_set
     else:
         sparsify_log = []
-        partial_set=set()
+        partial_dict=dict()
         keep_connected_set=set()
         num_nodes_originally = G.numberOfNodes()
         for i in range(G.numberOfNodes()):
@@ -1821,7 +2244,7 @@ def sdrg_partial(G, visualizeSteps = False, verbose=False, keep_connected = True
                     logging_toggle = False, 
                     sparsify_mode=True, 
                     sparsify_log=sparsify_log, 
-                    partial_set=partial_set, 
+                    partial_dict=partial_dict, 
                     visualizeStep=False, 
                     keep_connected=keep_connected, 
                     keep_connected_set=keep_connected_set, 
@@ -1836,7 +2259,7 @@ def sdrg_partial(G, visualizeSteps = False, verbose=False, keep_connected = True
                     logging_toggle = False, 
                     sparsify_mode=True, 
                     sparsify_log=sparsify_log, 
-                    partial_set=partial_set, 
+                    partial_dict=partial_dict, 
                     visualizeStep=False, 
                     keep_connected=keep_connected, 
                     keep_connected_set=keep_connected_set, 
@@ -1942,11 +2365,12 @@ def sdrg_sparsify_partial(G, percent_to_keep, keep_network_connected, kawashima=
     t0 = time.time_ns()
     #long
     if not running_single_full_sparsification:
-        G_tilde_1, sparsify_log, partial_set, keep_connected_set = sdrg_partial(G_tilde_1, keep_connected=keep_network_connected, use_kawashima=kawashima, use_local_max_filtering=local_max)
+        #partial_set
+        G_tilde_1, sparsify_log, partial_dict, keep_connected_set = sdrg_partial(G_tilde_1, keep_connected=keep_network_connected, use_kawashima=kawashima, use_local_max_filtering=local_max)
     else:
         G_tilde_1, sparsify_log, keep_connected_set = sdrg_partial(G_tilde_1, keep_connected=keep_network_connected, use_kawashima=kawashima, use_local_max_filtering=local_max, fully_sparse=True)
-    t1 = time.time_ns()
-    #print((t1-t0)/1000000000)
+    #t1 = time.time_ns()
+    print((time.time_ns()-t0)/1000000000)
     #print("finished sdrg; building sparsified network")
     edges_to_include = []
     for node_id in G_tilde_1.iterNodes(): #we don't know the index of the last node, so this directly gets us the object
@@ -1984,7 +2408,7 @@ def sdrg_sparsify_partial(G, percent_to_keep, keep_network_connected, kawashima=
     #print(decimation_log)
     #no_duplicate_decimation_log = list(dict.fromkeys(decimation_log))
     #print(edges_to_include_set)
-    t0 = time.time_ns()
+    #t0 = time.time_ns()
     
     print("built sparse backbone; now adding partial edges")
     
@@ -2047,20 +2471,33 @@ def sdrg_sparsify_partial(G, percent_to_keep, keep_network_connected, kawashima=
         
     #After this, we are NOT running a single full sparsification
     #print(len(partial_set))
-    #first prune the edges which are already included
+    #first prune the edges which are already included in the SDRG backbone
     already_included_edges = set()
     edges_to_be_readded = set()
-    for triplet in partial_set:
+    
+    #the following two for loops run in O(N) where N = number of edges in original network
+    
+    #remove the edges already in the backbone from the partial dict
+    for edge in edges_to_include_set:#edges_to_include_set = {(u0, v0), (u1, v1), ...}
+        del partial_dict[edge]    
+        #partial_dict.pop(edge)
+    
+    #put all of the other edges in the partial dict into the set of edges to be readded
+    for edge in partial_dict:
+        edges_to_be_readded.add(edge)
+    
+    """for key in partial_dict:
         # triplet for the edge between u and v is: ((u,v), omega_edge_uv_got_decimated_at, weight_of_edge_uv)
-        if triplet[0] in edges_to_include_set:
-            already_included_edges.add(triplet)
+        
+        if key in edges_to_include_set:
+            already_included_edges.add(key)
             #print(triplet)
         else:
             #print(tuple(sorted(triplet[0])))
             #print(sorted(triplet[0]))
             edges_to_be_readded.add(tuple(sorted(triplet[0])))
     for triplet in already_included_edges:
-        partial_set.remove(triplet)
+        partial_set.remove(triplet)"""
     #print(len(partial_set))
     print(f"The SDRG backbone has {len(edges_to_include_set)} edges")
     #long
@@ -2072,17 +2509,9 @@ def sdrg_sparsify_partial(G, percent_to_keep, keep_network_connected, kawashima=
     #to fix this, we search through and find the lowest energy scale that each got removed at
     
     edge_multiplicity_dict = {edge: 0 for edge in G_tilde_2.iterEdges()}
-    
-    for edge in edges_to_be_readded:
-        all_instances_of_edge = sorted([triplet for triplet in partial_set if triplet[0] == edge], key=lambda x: (x[1], x[2]))
-        num_instances_of_edge = len(all_instances_of_edge)
-        if num_instances_of_edge > 1:
-            #only keep the last-removed instance of the edge (i.e, instance with lowest omega)
-            for instance in all_instances_of_edge[1:]:
-                partial_set.remove(instance)
-        
-        if use_multiplicity:
-            edge_multiplicity_dict[edge] = num_instances_of_edge
+    if use_multiplicity:
+        for edge in edges_to_be_readded:
+            edge_multiplicity_dict[edge] = partial_dict[edge][2]
             
     #if use_multiplicity:
         #print("---max & min multiplicity---")
@@ -2091,11 +2520,11 @@ def sdrg_sparsify_partial(G, percent_to_keep, keep_network_connected, kawashima=
         #multipliers = np.linspace(0.5, 2, G_tilde_3.numberOfEdges())
         
     #we reverse so that the edges which lasted the *least* amount of time (i.e, were fully decimated at the *highest* energy scale) are readded first
-    partial_edges_sorted = sorted([triplet for triplet in partial_set], key=lambda x: (x[1], x[2]), reverse=True)
+    partial_edges_sorted = sorted([[edge, partial_dict[edge][0], partial_dict[edge][1], partial_dict[edge][2]] for edge in partial_dict], key=lambda x: (x[1], x[2]), reverse=True) #sorted([triplet for triplet in partial_set], key=lambda x: (x[1], x[2]), reverse=True)
     #print(partial_edges_sorted)
     
     #attempt to find the best (minimal edge count) possible sparsification:
-    def check_num_edges_for_certain_sparsification_percentage(G_in, partial_edges_sorted, keep_connected_set, num_edges_to_readd, all_edges, included_edges):
+    def check_num_edges_for_certain_sparsification_percentage(G_in, partial_edges_sorted, keep_connected_set, num_edges_to_readd, all_edges, included_edges, keep_network_connected):
         G = copy_graph(G_in)
         Gt2 = copy_graph(G)
         Gt3 = copy_graph(G)
@@ -2144,7 +2573,20 @@ def sdrg_sparsify_partial(G, percent_to_keep, keep_network_connected, kawashima=
         return Gt3.numberOfEdges()
         #for i in range(0,50):
     
-
+    
+    def find_sparsification_percentage_closest_to_number_of_edges(target_edge_number, G, G_tilde_2, partial_edges_sorted, keep_connected_set, all_edges_set, edges_to_include_set, keep_network_connected):
+        min_distance = G_tilde_2.numberOfEdges()
+        closest_percentage = 0
+        for i in range(len(partial_edges_sorted)):
+            #p = i/100
+            edge_count = check_num_edges_for_certain_sparsification_percentage(G_tilde_2, partial_edges_sorted, keep_connected_set, i, all_edges_set, edges_to_include_set, keep_network_connected)
+            if abs(edge_count-target_edge_number) <= min_distance:
+                min_distance = abs(edge_count-target_edge_number)
+                closest_percentage = i/G.numberOfEdges()
+                
+        print(f"closest percentage is {closest_percentage*100}%, which is {min_distance} edges away from the target value")
+                
+        return closest_percentage
     
     if get_minimal_sparsification:
         print("Finding lowest edge count sparsification")
@@ -2153,7 +2595,7 @@ def sdrg_sparsify_partial(G, percent_to_keep, keep_network_connected, kawashima=
         min_edge_count_percentage = 0
         for i in range(len(partial_edges_sorted)):
             #p = i/100
-            edge_count = check_num_edges_for_certain_sparsification_percentage(G_tilde_2, partial_edges_sorted, keep_connected_set, i, all_edges_set, edges_to_include_set)
+            edge_count = check_num_edges_for_certain_sparsification_percentage(G_tilde_2, partial_edges_sorted, keep_connected_set, i, all_edges_set, edges_to_include_set, keep_network_connected)
             if edge_count <= min_edge_count:
                 min_edge_count = edge_count
                 min_edge_count_percentage = i/G.numberOfEdges()
@@ -2167,14 +2609,40 @@ def sdrg_sparsify_partial(G, percent_to_keep, keep_network_connected, kawashima=
         print("=================")
         print("Building a single sparse network")
         
-        #Add in our partial edges
-        for i in range(round(len(partial_edges_sorted)*percent_to_keep)):
+        increments = [percent_to_keep]
+    
+    #convert our target percentages to real values
+    if get_minimal_sparsification:
+        #if we use the minimal sparsification then we should skip the last value in increments b/c it was already calculated
+        for i in range(len(increments)-1):
+            target_edge_number = round(increments[i]*G.numberOfEdges())
+            corresponding_target_percentage = find_sparsification_percentage_closest_to_number_of_edges(target_edge_number, G, G_tilde_2, partial_edges_sorted, keep_connected_set, all_edges_set, edges_to_include_set, keep_network_connected)
+            increments[i] = corresponding_target_percentage
+    else:
+        #otherwise we can just go through every value in increments
+        for i in range(len(increments)):
+            target_edge_number = round(increments[i]*G.numberOfEdges())
+            print(target_edge_number)
+            
+            corresponding_target_percentage = find_sparsification_percentage_closest_to_number_of_edges(target_edge_number, G, G_tilde_2, partial_edges_sorted, keep_connected_set, all_edges_set, edges_to_include_set, keep_network_connected)
+            
+            increments[i] = corresponding_target_percentage
+    
+    
+    
+    list_of_sparsified_networks = []
+    
+    for sparsification_level in increments:
+        G_tilde_2 = copy_graph(G)
+        G_tilde_3 = copy_graph(G)
+        edges_to_include_set = set(edges_to_include)
+        
+        for i in range(round(len(partial_edges_sorted)*sparsification_level)):
             edges_to_include_set.add(partial_edges_sorted[i][0])
         
         
         
-        
-        print(f"at end we'll have  {len(edges_to_include_set)} edges")
+        #print(f"at end we'll have  {len(edges_to_include_set)} edges")
         
         edges_to_remove = all_edges_set - edges_to_include_set    
         for edge in edges_to_remove:
@@ -2186,29 +2654,26 @@ def sdrg_sparsify_partial(G, percent_to_keep, keep_network_connected, kawashima=
             G_tilde_2.removeEdge(int(edge[0]), int(edge[1]))    
         
         if keep_network_connected:
-            #to keep the network fully connected, we:
             print("Construction completed; now adding in connections to keep network fully connected")
-            #find the components
             cc = nk.components.ConnectedComponents(G_tilde_2)
             cc.run()
             #print(f"{len(cc.getComponentSizes())} components: {cc.getComponents()}")
             #print(max(cc.getComponentSizes().values()))
-            
-            #format them into a nice list so that we can easily search through
             components_list = sorted(cc.getComponents(), key=lambda x: len(x), reverse=True)
             #print("-")
             components_list = components_list[1:]
             #minimum_required_connection_edges = set()
             for component in components_list:
                 for site in component:
-                    #for every site, in every component, add in the (unique, b/c this goes into a set) edges which were the strongest at the time of component decimation 
                     required_edges = {edge for edge in keep_connected_set if site in edge}
                     if not keep_connected_singly:
                         for edge in required_edges:
                             edges_to_include_set.add(edge)
                     else:
-                        strongest_edge_connected_to_component = max(required_edges, key=lambda edge: G.weight(edge[0], edge[1]))
-                        edges_to_include_set.add(strongest_edge_connected_to_component)
+                        if len(required_edges) > 0:
+                            strongest_edge_connected_to_component = max(required_edges, key=lambda edge: G.weight(edge[0], edge[1]))
+                            edges_to_include_set.add(strongest_edge_connected_to_component)
+                        
             
             #print(components_list)
             
@@ -2220,7 +2685,7 @@ def sdrg_sparsify_partial(G, percent_to_keep, keep_network_connected, kawashima=
                 #print(f"removed {edge[0]}, {edge[1]} with weight {G_tilde_2.weight(edge[0], edge[1])}")
             
                 G_tilde_3.removeEdge(int(edge[0]), int(edge[1]))    
-                
+        
             if use_multiplicity:
                 max_mult = max(edge_multiplicity_dict.values())
                 min_mult = min(edge_multiplicity_dict.values())
@@ -2229,120 +2694,39 @@ def sdrg_sparsify_partial(G, percent_to_keep, keep_network_connected, kawashima=
                 for edge in G_tilde_3.iterEdges():
                     multiplier = ((edge_multiplicity_dict[edge] - min_mult)/(max_mult - min_mult))+0.5 #outputs number between 0.5 and 1.5 to multiply by
                     G_tilde_3.setWeight(edge[0], edge[1], G_tilde_3.weight(edge[0], edge[1]) * multiplier)
+
             
             t1 = time.time_ns()
             #print(len(partial_set))
-            print((t1-t0)/1000000000)
-            return G_tilde_3
-        
-        if use_multiplicity:
-            max_mult = max(edge_multiplicity_dict.values())
-            min_mult = min(edge_multiplicity_dict.values())
-            #print(max_mult)
-            #print(min_mult)
-            for edge in G_tilde_2.iterEdges():
-                multiplier = ((edge_multiplicity_dict[edge] - min_mult)/(max_mult - min_mult))+0.5 #outputs number between 0.5 and 1.5 to multiply by
-                G_tilde_2.setWeight(edge[0], edge[1], G_tilde_2.weight(edge[0], edge[1]) * multiplier)
-
-        
-        t1 = time.time_ns()
-        #print(len(partial_set))
-        print((t1-t0)/1000000000)
-        return G_tilde_2
-    elif return_incremental_sparsifications:
-        
-        list_of_sparsified_networks = []
-        
-        for sparsification_level in increments:
-            G_tilde_2 = copy_graph(G)
-            G_tilde_3 = copy_graph(G)
-            edges_to_include_set = set(edges_to_include)
-            
-            for i in range(round(len(partial_edges_sorted)*sparsification_level)):
-                edges_to_include_set.add(partial_edges_sorted[i][0])
-            
-            
-            
-            print(f"at end we'll have  {len(edges_to_include_set)} edges")
-            
-            edges_to_remove = all_edges_set - edges_to_include_set    
-            for edge in edges_to_remove:
-            
-                #edge = no_duplicate_decimation_log[i]
-                
-                #print(f"removed {edge[0]}, {edge[1]} with weight {G_tilde_2.weight(edge[0], edge[1])}")
-            
-                G_tilde_2.removeEdge(int(edge[0]), int(edge[1]))    
-            
-            if keep_network_connected:
-                print("Construction completed; now adding in connections to keep network fully connected")
-                cc = nk.components.ConnectedComponents(G_tilde_2)
-                cc.run()
-                #print(f"{len(cc.getComponentSizes())} components: {cc.getComponents()}")
-                #print(max(cc.getComponentSizes().values()))
-                components_list = sorted(cc.getComponents(), key=lambda x: len(x), reverse=True)
-                #print("-")
-                components_list = components_list[1:]
-                #minimum_required_connection_edges = set()
-                for component in components_list:
-                    for site in component:
-                        required_edges = {edge for edge in keep_connected_set if site in edge}
-                        if not keep_connected_singly:
-                            for edge in required_edges:
-                                edges_to_include_set.add(edge)
-                        else:
-                            if len(required_edges) > 0:
-                                strongest_edge_connected_to_component = max(required_edges, key=lambda edge: G.weight(edge[0], edge[1]))
-                                edges_to_include_set.add(strongest_edge_connected_to_component)
-                            
-                
-                #print(components_list)
-                
-                edges_to_remove = all_edges_set - edges_to_include_set    
-                for edge in edges_to_remove:
-                
-                    #edge = no_duplicate_decimation_log[i]
-                    
-                    #print(f"removed {edge[0]}, {edge[1]} with weight {G_tilde_2.weight(edge[0], edge[1])}")
-                
-                    G_tilde_3.removeEdge(int(edge[0]), int(edge[1]))    
-            
-                if use_multiplicity:
-                    max_mult = max(edge_multiplicity_dict.values())
-                    min_mult = min(edge_multiplicity_dict.values())
-                    #print(max_mult)
-                    #print(min_mult)
-                    for edge in G_tilde_3.iterEdges():
-                        multiplier = ((edge_multiplicity_dict[edge] - min_mult)/(max_mult - min_mult))+0.5 #outputs number between 0.5 and 1.5 to multiply by
-                        G_tilde_3.setWeight(edge[0], edge[1], G_tilde_3.weight(edge[0], edge[1]) * multiplier)
-
-                
-                t1 = time.time_ns()
-                #print(len(partial_set))
-                #print((t1-t0)/1000000000)
-                list_of_sparsified_networks.append(G_tilde_3)
-                #return G_tilde_3
-            else:
-                
-                if use_multiplicity:
-                    max_mult = max(edge_multiplicity_dict.values())
-                    min_mult = min(edge_multiplicity_dict.values())
-                    #print(max_mult)
-                    #print(min_mult)
-                    for edge in G_tilde_2.iterEdges():
-                        multiplier = ((edge_multiplicity_dict[edge] - min_mult)/(max_mult - min_mult))+0.5 #outputs number between 0.5 and 1.5 to multiply by
-                        G_tilde_2.setWeight(edge[0], edge[1], G_tilde_2.weight(edge[0], edge[1]) * multiplier)
-
-                
-                t1 = time.time_ns()
-                #print(len(partial_set))
-                print((t1-t0)/1000000000)
-                list_of_sparsified_networks.append(G_tilde_2)
-                #return G_tilde_2
-        if not get_minimal_sparsification:
-            return list_of_sparsified_networks
+            #print((t1-t0)/1000000000)
+            list_of_sparsified_networks.append(G_tilde_3)
+            print(f"ended up with {G_tilde_3.numberOfEdges()} edges")   
+            #return G_tilde_3
         else:
-            return list_of_sparsified_networks, increments[-1]
+            
+            if use_multiplicity:
+                max_mult = max(edge_multiplicity_dict.values())
+                min_mult = min(edge_multiplicity_dict.values())
+                #print(max_mult)
+                #print(min_mult)
+                for edge in G_tilde_2.iterEdges():
+                    multiplier = ((edge_multiplicity_dict[edge] - min_mult)/(max_mult - min_mult))+0.5 #outputs number between 0.5 and 1.5 to multiply by
+                    G_tilde_2.setWeight(edge[0], edge[1], G_tilde_2.weight(edge[0], edge[1]) * multiplier)
+
+            
+            t1 = time.time_ns()
+            #print(len(partial_set))
+            #print((t1-t0)/1000000000)
+            list_of_sparsified_networks.append(G_tilde_2)
+            #return G_tilde_2
+            print(f"ended up with {G_tilde_2.numberOfEdges()} edges")        
+    print((time.time_ns()-t0)/1000000000)
+    if not return_incremental_sparsifications:
+        return list_of_sparsified_networks[0]
+    elif not get_minimal_sparsification:
+        return list_of_sparsified_networks
+    else:
+        return list_of_sparsified_networks, increments[-1]
        
 
 def sdrg_sparsify_n_edges(G, n_edges):
@@ -2777,11 +3161,20 @@ def uniform_sampling_sparsification(G, n_samples, visualize_on = False):
         list_of_edges_to_keep.append((choice[0], choice[1]))
         #we ensure that there are no duplicates
         
-    for edge in G_tilde.iterEdges():
-        if edge not in list_of_edges_to_keep:
-            G_tilde.removeEdge(edge[0], edge[1])
-    
+    #print(len(list_of_edges_to_keep))
     set_of_edges_to_keep = set(list_of_edges_to_keep)
+    all_edge_set = set([edge for edge in G.iterEdges()])
+    edges_to_remove = all_edge_set - set_of_edges_to_keep
+
+    for edge in edges_to_remove:
+        G_tilde.removeEdge(edge[0], edge[1])
+    """for edge in G_tilde.iterEdges():
+        if edge not in list_of_edges_to_keep:#and tuple(reversed(edge)) not in list_of_edges_to_keep:
+            G_tilde.removeEdge(edge[0], edge[1])"""
+    
+    #print(G_tilde.numberOfEdges())
+    
+    #set_of_edges_to_keep = set(list_of_edges_to_keep)
     for edge in set_of_edges_to_keep:
         multiplicity = list_of_edges_to_keep.count(edge)
         G_tilde.setWeight(edge[0], edge[1], G.weight(edge[0], edge[1]) * multiplicity)
@@ -2808,11 +3201,18 @@ def weight_sampling_sparsification(G, n_samples, visualize_on = False):
         choice = edges[choice_index]
         list_of_edges_to_keep.append((choice[0], choice[1]))
         
-    for edge in G_tilde.iterEdges():
-        if edge not in list_of_edges_to_keep:
-            G_tilde.removeEdge(edge[0], edge[1])
-    
     set_of_edges_to_keep = set(list_of_edges_to_keep)
+    all_edge_set = set([edge for edge in G.iterEdges()])
+    edges_to_remove = all_edge_set - set_of_edges_to_keep
+
+    for edge in edges_to_remove:
+        G_tilde.removeEdge(edge[0], edge[1])
+    
+    """for edge in G_tilde.iterEdges():
+        if edge not in list_of_edges_to_keep:
+            G_tilde.removeEdge(edge[0], edge[1])"""
+    
+    #set_of_edges_to_keep = set(list_of_edges_to_keep)
     for edge in set_of_edges_to_keep:
         multiplicity = list_of_edges_to_keep.count(edge)
         G_tilde.setWeight(edge[0], edge[1], G.weight(edge[0], edge[1]) * multiplicity)
@@ -2996,7 +3396,9 @@ def effective_resistance_sampling_sparsification(G, n_samples, visualize_on = Fa
     
     #init activity values (infected)
     is_active = G_tilde.attachNodeAttribute("active", int)
-    
+    infection_progenitor = G_tilde.attachNodeAttribute("inf_prog", int)
+    for site in G_tilde.iterNodes():
+        infection_progenitor[site] = site
     #init mu values
     healing_factor = G_tilde.attachNodeAttribute("mu", float)
     components = G_tilde.attachNodeAttribute("components", str)
@@ -3054,7 +3456,9 @@ def semi_metric_synthetic_network_gen(G, target_tau_metric, viz = False):
     is_active = B.attachNodeAttribute("active", int)
     healing_factor = B.attachNodeAttribute("mu", float)
     components = B.attachNodeAttribute("components", str)
-    
+    infection_progenitor = B.attachNodeAttribute("inf_prog", int)
+    for site in B.iterNodes():
+        infection_progenitor[site] = site
     edge_components = B.attachEdgeAttribute("e_comp", str)
     
     #mu & lambda components have *all* components that have contributed to the mu or lambda values of a node/edge, respectively
@@ -3229,7 +3633,9 @@ def SMDS_to_n_edges(G, n_edges, viz=False):
     healing_factor = B.attachNodeAttribute("mu", float)
     components = B.attachNodeAttribute("components", str)
     edge_components = B.attachEdgeAttribute("e_comp", str)
-    
+    infection_progenitor = B.attachNodeAttribute("inf_prog", int)
+    for site in B.iterNodes():
+        infection_progenitor[site] = site
     #mu & lambda components have *all* components that have contributed to the mu or lambda values of a node/edge, respectively
     # these are stored as n123_e(34,42)_n53_ ..., with contributing nodes denoted n, and contributing edges denoted e
     mu_components = B.attachNodeAttribute("mu_comp", str)
@@ -3322,7 +3728,9 @@ def SMDS_sparsifier(G, chi, output_num_components = False, viz = False):
     healing_factor = B.attachNodeAttribute("mu", float)
     components = B.attachNodeAttribute("components", str)
     edge_components = B.attachEdgeAttribute("e_comp", str)
-    
+    infection_progenitor = B.attachNodeAttribute("inf_prog", int)
+    for site in B.iterNodes():
+        infection_progenitor[site] = site
     #mu & lambda components have *all* components that have contributed to the mu or lambda values of a node/edge, respectively
     # these are stored as n123_e(34,42)_n53_ ..., with contributing nodes denoted n, and contributing edges denoted e
     mu_components = B.attachNodeAttribute("mu_comp", str)
@@ -3426,6 +3834,38 @@ def get_neil_output(G_in, verbose = True, lm=False):
         print(formatted_decimated_sites)
     else:
         return formatted_decimated_sites
+    
+def get_energy_clusters(G_in, verbose = True, lm=False):
+    G = copy_graph(G_in)
+    energy_clusters = set()
+    if not lm:
+        for i in range(G.numberOfNodes()):
+            #print("test")
+            G, energy_clusters = sdrg_step(G, neil_mode = True, logging_toggle = False, sparsify_mode= False, visualizeStep=False, verbose=False, kawashima_filtering=True, energy_clusters=energy_clusters, output_energy_clusters=True)
+    else:
+        for i in range(G.numberOfNodes()):
+            G, energy_clusters = sdrg_step(G, neil_mode = True, logging_toggle = False, sparsify_mode= False, visualizeStep=False, verbose=False, kawashima_filtering=True, local_maxima_filtering=True, energy_clusters=energy_clusters, output_energy_clusters=True)
+
+    #print(decimated_sites)
+    
+    
+
+    temp = [components.split("_") for components in energy_clusters]
+    
+    print(temp)
+    formatted_decimated_sites = sorted([sorted([x for x in sublist]) for sublist in temp], key = lambda x: (len(x), x))
+    just_nodes = []#[[] for cluster in formatted_decimated_sites]
+    for cluster in formatted_decimated_sites:
+        arr = []
+        for element in cluster:
+            if element[0] == 'n':
+                arr.append(int(element[1:]))
+        just_nodes.append(arr)
+    if verbose:
+        print("--------------------------")
+        print(just_nodes)
+    else:
+        return just_nodes
     
 def get_nodes_of_largest_k_clusters(G_in, k):
     clusters = get_neil_output(G_in, verbose=False)
@@ -4820,6 +5260,7 @@ def sparsified_DCP_fast_memsafe(G, track_TOA=False, quasistationary = True, t_ma
     healing_factor = G.getNodeAttribute("mu", float)
     is_active = G.getNodeAttribute("active", int)
     components = G.getNodeAttribute("components", str)
+    infection_progenitor = G.getNodeAttribute("inf_prog", int)
     nodes = list(G.iterNodes())
     
     N = G.numberOfNodes()
@@ -4955,19 +5396,31 @@ def sparsified_DCP_fast_memsafe(G, track_TOA=False, quasistationary = True, t_ma
     cc = nk.components.ConnectedComponents(G)
     cc.run()
     comps = cc.getComponents()
-    component_each_node_is_in = [get_index_of_sublist_with_value(u, comps) for u in G.iterNodes()]
+    #component_each_node_is_in = [get_index_of_sublist_with_value(u, comps) for u in G.iterNodes()]
+    biggest_component = max(comps, key=lambda x: len(x))
     #print(comps)
     
-    def component_has_many_active_sites(node):
+    def component_has_many_active_sites(node, biggest_component):
+        #THIS TURNS OFF THE COMPONENT-WISE QUASISTATIONARY SIMULATION!!!!!
+        #return True
+        
         #many=2
         #nodes_of_component_this_node_is_in = comps[component_each_node_is_in[node]]
-        count_active  = 0
-        for i in comps[component_each_node_is_in[node]]:
-            if is_active[i]:
-                count_active += 1
-            if count_active > 1:
-                return True
-        return False
+        if node in biggest_component:
+            count_active  = 0
+            for i in biggest_component:
+                if is_active[i]:
+                    count_active += 1
+                if count_active > 1:
+                    return True
+            print("--------------------------------------------")
+            print("--------------------------------------------")
+            print("HIT REFLECTING BOUNDARY CONDITION!!!!!!!!!!!")
+            print("--------------------------------------------")
+            print("--------------------------------------------")
+            return False
+        else:
+            return True
     
     
     while t < t_max:
@@ -5047,6 +5500,8 @@ def sparsified_DCP_fast_memsafe(G, track_TOA=False, quasistationary = True, t_ma
                     if not is_active[site_to_infect]:
                         #print("infecting")
                         is_active[site_to_infect] = 1
+                        #print(type(random_site))
+                        infection_progenitor[site_to_infect] = int(random_site)
                         
                         active_nodes.add(site_to_infect)# = np.append(active_nodes, site_to_infect)
                         """newly_exposed_neighbors = [(site_to_infect,v) 
@@ -5078,13 +5533,13 @@ def sparsified_DCP_fast_memsafe(G, track_TOA=False, quasistationary = True, t_ma
                     deltaT = 1/(Q*(N_active+1))
                     #t += deltaT
             
-            elif u1 <= prob_to_heal and not (quasistationary and N_active == 1) and component_has_many_active_sites(random_site):
+            elif u1 <= prob_to_heal and not (quasistationary and N_active == 1) and component_has_many_active_sites(random_site, biggest_component):
                 #print("healing")
                 #choose random node to heal?
                 #site_to_heal = np.random.choice(tuple(active_nodes)) #active_nodes[np.random.randint(0, len(active_nodes))] #np.random.choice(active_nodes_list, p=heal_pmf)
 
                 is_active[random_site] = 0
-                
+                #infection_progenitor[random_site] = -1
                 #newly_unexposed_neighbors = [edge for edge in exposed_edges if edge[0] == random_site]
                 #for neighbor in G.iterNeighbors(random_site):
                 #    if G.weight(random_site, neighbor) == lambda_max:
@@ -6300,6 +6755,7 @@ def fast_dcp_until_quasistationary_memsafe(G, init_time = 2**3, t_max=4096, G_st
     #init time should be a power of 2
     # it doesn't actually have to be but it should be just b/c that makes nice and intuitive doubling numbers
     # t_max should be really really big; on order of 10 million for a cycle of length L=32
+    
     print("starting")
     reset_to_distributed_infection(G, 1)
     #d_init = sparsified_DCP_fast(G, t_max=1, original_graph_size=original_graph_size)
@@ -6328,6 +6784,17 @@ def fast_dcp_until_quasistationary_memsafe(G, init_time = 2**3, t_max=4096, G_st
                 vis_lat_advanced_memsafe(data_first_half, original_graph_size, t_i, G_structure, dimensions, title + f", Quasi: t_i={t_i}, 1st half")
                 vis_lat_advanced_memsafe(data_second_half, original_graph_size, t_i, G_structure, dimensions, title + f", Quasi: t_i={t_i}, 2nd half")
             
+            infection_progenitors = G.getNodeAttribute("inf_prog", int)
+            
+            infection_progenitors_list = [[] for site in G.iterNodes()]
+            
+            for site in G.iterNodes():
+                infection_progenitors_list[infection_progenitors[site]].append(site)
+            
+            L = int(math.sqrt(G.numberOfNodes()))
+            print(infection_progenitors_list)
+            vis_given_clusters(infection_progenitors_list, L, "lattice", "Infection Progenitors Map")
+            
             if save_last_state:
                 vis_lat_advanced_memsafe(data_second_half, original_graph_size, t_i, G_structure, dimensions, title + f", Quasi: t_i={t_i}, 2nd half", save_fig=True)
             in_quasistationary = True
@@ -6344,6 +6811,163 @@ def fast_dcp_until_quasistationary_memsafe(G, init_time = 2**3, t_max=4096, G_st
             if viz:
                 vis_lat_advanced_memsafe(data_first_half, original_graph_size, t_i, G_structure, dimensions, title + f", t_i={t_i}, 1st half")
                 vis_lat_advanced_memsafe(data_second_half, original_graph_size, t_i, G_structure, dimensions, title + f", t_i={t_i}, 2nd half")
+            time_so_far = (t-t0)/1000000000 # in secconds
+            next_t_hrs = time_so_far // 3600
+            next_t_mins = (time_so_far-(next_t_hrs*3600)) // 60
+            next_t_secs = (time_so_far - (next_t_hrs*3600) - (next_t_mins*60)) 
+            
+            print(f"Simulation has taken {time_so_far} seconds; next will end in roughly {next_t_hrs}hrs : {next_t_mins}m : {next_t_secs}s. Time is {time.localtime().tm_hour} : {time.localtime().tm_min} : {time.localtime().tm_sec} --- next step done at {time.localtime().tm_hour + next_t_hrs} : {time.localtime().tm_min + next_t_mins} : {time.localtime().tm_sec + next_t_secs}")
+            data_first_half = collate_fast_dcp_memsafe_data(data_first_half, data_second_half)
+            #print("data collated")
+            #print(f"time is {time.localtime().tm_hour} : {time.localtime().tm_min} : {time.localtime().tm_sec} --- next step finishes at {time.localtime().tm_hour + next_t_hrs} : {time.localtime().tm_min + next_t_mins} : {time.localtime().tm_sec + next_t_secs}")
+            t_i *= 2
+        print(" ------- ")
+
+def compare_color_similarity(coloring0, coloring1):
+    """
+    This function measures the *overlap* in two colorings of the same graph
+    No "similarity score" is given for nearly-overlapping regions
+    coloring0: a graph coloring, given by a list of lists
+    coloring1: like coloring0
+
+    """
+    print("DOING SOMETHING")
+    #coloring0 = set()
+    #coloring1 = set()
+    #for cluster in coloring0_list:
+    #    coloring0.add(tuple(cluster))
+    #for cluster in coloring1_list:
+    #    coloring1.add(tuple(cluster))
+    
+    num_colors0 = 0
+    num_colors1 = 0
+    for cluster in coloring0:
+        if len(cluster) > 0:
+            num_colors0 += 1
+            
+    for cluster in coloring1:
+        if len(cluster) > 0:
+            num_colors1 += 1
+            
+    if num_colors0 > num_colors1:
+        return num_colors1/num_colors0
+    return num_colors0/num_colors1
+    """
+    similarity_counter = 0
+    #for every cluster in coloring0...
+    for cluster in coloring0:
+        other_cluster_comparison_scores = []
+        #check how similar it is to all of the clusters in coloring1
+        for other_cluster in coloring1:
+            cluster_cluster_similarity = 0
+            for element in cluster:
+                if element in other_cluster:
+                    cluster_cluster_similarity += 1
+                    
+            other_cluster_comparison_scores.append(cluster_cluster_similarity)
+        #the cluster it is most similar to will hopefully overlap it a lot
+        #so we add to our similarity counter!
+        #the sum of all max similarities can never be larger than the size of the graph
+        similarity_with_closest_cluster = max(other_cluster_comparison_scores)
+        similarity_counter += similarity_with_closest_cluster
+    
+
+    #gives 1 if they are identical, 0 if totally different
+    return similarity_counter/len(coloring0)"""
+        
+    
+
+def fast_dcp_until_color_quasistationary_memsafe(G, init_time = 2**6, t_max=114096, G_structure="chain", original_graph_size=100, dimensions = [1, 1], viz=True, title="", spearman_thresh = 0.99, save_last_state=False, return_density_set=False, return_time = False, print_stats = True):
+    #init time should be a power of 2
+    # it doesn't actually have to be but it should be just b/c that makes nice and intuitive doubling numbers
+    # t_max should be really really big; on order of 10 million for a cycle of length L=32
+    infection_progenitors = G.getNodeAttribute("inf_prog", int)
+    print("starting")
+    reset_to_distributed_infection(G, 1)
+    #d_init = sparsified_DCP_fast(G, t_max=1, original_graph_size=original_graph_size)
+    #vis_lat_advanced(d_init, original_graph_size, 1, G_structure, dimensions, f"initial state for " + title)
+    #run relaxation at the start 
+    sparsified_DCP_fast_memsafe(G, t_max=init_time, original_graph_size=original_graph_size)
+    #data0 = sparsified_DCP_fast(G, t_max=init_time, original_graph_size=original_graph_size)
+    old_infection_progenitors_list = [[] for site in G.iterNodes()]
+    
+    for site in G.iterNodes():
+        old_infection_progenitors_list[infection_progenitors[site]].append(site)
+    
+    t0=time.time_ns()
+    in_quasistationary = False
+    t_i = init_time
+    data_first_half = sparsified_DCP_fast_memsafe(G, t_max=t_i, original_graph_size=original_graph_size)
+    while not in_quasistationary:
+        #data0 = sparsified_DCP_fast(G, t_max=t_i, original_graph_size=original_graph_size)
+        #run the quasistationary simulation
+        if return_density_set:
+            data_second_half, density_tuples = sparsified_DCP_fast_memsafe(G, t_max=t_i, original_graph_size=original_graph_size, return_density_set=return_density_set)
+        else:
+            data_second_half = sparsified_DCP_fast_memsafe(G, t_max=t_i, original_graph_size=original_graph_size, return_density_set=return_density_set)
+        spearman_compare_pval, lin_reg_r_squared, spearman_rho = spearman_compare_memsafe(data_first_half, data_second_half, original_graph_size, t_i, title=title + f", t_i={t_i} scatter plot", verbose = print_stats, make_fig=viz)
+        
+        new_infection_progenitors_list = [[] for site in G.iterNodes()]
+        
+        for site in G.iterNodes():
+            new_infection_progenitors_list[infection_progenitors[site]].append(site)
+        
+        color_sim = compare_color_similarity(old_infection_progenitors_list, new_infection_progenitors_list)
+        L = int(math.sqrt(G.numberOfNodes()))
+        vis_given_clusters(old_infection_progenitors_list, L, "lattice", "1st Infection Progenitors Map", ignore_singletons=True)
+
+        vis_given_clusters(new_infection_progenitors_list, L, "lattice", "2nd Infection Progenitors Map", ignore_singletons=True)
+
+        
+        old_infection_progenitors_list = new_infection_progenitors_list
+        #print("------")
+        print(f"color similarity is {color_sim}")
+        
+        energy_clusters = get_energy_clusters(G, verbose=False)
+        vis_given_clusters(energy_clusters, L, "lattice", "energy clusters")
+        
+        if color_sim > 0.999 or t_i > t_max:#(spearman_compare_pval < 0.05 and spearman_rho > spearman_thresh) or t_i > t_max:# and lin_reg_r_squared > 0.9:
+            if (spearman_compare_pval < 0.05 and spearman_rho > spearman_thresh):
+                print("found quasistationary state")
+            else:
+                print("ran into t_max")
+            if viz:
+                vis_lat_advanced_memsafe(data_first_half, original_graph_size, t_i, G_structure, dimensions, title + f", Quasi: t_i={t_i}, 1st half")
+                vis_lat_advanced_memsafe(data_second_half, original_graph_size, t_i, G_structure, dimensions, title + f", Quasi: t_i={t_i}, 2nd half")
+            
+            
+            
+            infection_progenitors_list = [[] for site in G.iterNodes()]
+            
+            for site in G.iterNodes():
+                infection_progenitors_list[infection_progenitors[site]].append(site)
+            
+            L = int(math.sqrt(G.numberOfNodes()))
+            print(old_infection_progenitors_list)
+            print("--")
+            print(infection_progenitors_list)
+            vis_given_clusters(old_infection_progenitors_list, L, "lattice", "1st half Infection Progenitors Map")
+
+            vis_given_clusters(infection_progenitors_list, L, "lattice", "2nd half Infection Progenitors Map")
+            
+            if save_last_state:
+                vis_lat_advanced_memsafe(data_second_half, original_graph_size, t_i, G_structure, dimensions, title + f", Quasi: t_i={t_i}, 2nd half", save_fig=True)
+            in_quasistationary = True
+            if return_time:
+                return data_second_half, t_i
+            elif not return_density_set:
+                return data_second_half
+            
+            else: 
+                return data_second_half, density_tuples
+        else:
+            t = time.time_ns()
+            print(f"Quasistationary state not yet reached with rho = {spearman_rho}. Doubling to t_i = {2*t_i}. ")
+            if viz:
+                vis_lat_advanced_memsafe(data_first_half, original_graph_size, t_i, G_structure, dimensions, title + f", t_i={t_i}, 1st half")
+                vis_lat_advanced_memsafe(data_second_half, original_graph_size, t_i, G_structure, dimensions, title + f", t_i={t_i}, 2nd half")
+            
+            
             time_so_far = (t-t0)/1000000000 # in secconds
             next_t_hrs = time_so_far // 3600
             next_t_mins = (time_so_far-(next_t_hrs*3600)) // 60
@@ -7487,13 +8111,14 @@ def spearman_compare_memsafe_diff(orig_data, mod_data, original_graph_size, rela
     weight_matrix = np.reshape(weights, [L, L])
     #print(matrix_o)
 
-    wasserstein_dist = wasserstein_2d_grid_pot(matrix_o, matrix_m, metric='manhattan')#scipy.stats.wasserstein_distance(sorted_prop_time_active_o, prop_mod_sorted)
+    wasserstein_dist = 0#wasserstein_2d_grid_pot(matrix_o, matrix_m, metric='manhattan')#scipy.stats.wasserstein_distance(sorted_prop_time_active_o, prop_mod_sorted)
     #print("calculating 2d wasserstein distance")
     jensenshannon_dist = 0
     if np.inf not in matrix_m and np.nan not in matrix_m:
         #print(matrix_m)
         #print(np.sum(matrix_m*weight_matrix))
-        jensenshannon_dist = wasserstein_2d_grid_pot(matrix_o*weight_matrix, matrix_m*weight_matrix, metric='manhattan') #wasserstein_1_distance_2d_grid(matrix_o, matrix_m) #scipy.stats.wasserstein_distance_nd(matrix_o, matrix_m, u_weights=weight_matrix, v_weights=weight_matrix) #weighted_kl_divergence_symmetric(sorted_prop_time_active_o, prop_mod_sorted, weights=weights) #scipy.special.kl_div(sorted_prop_time_active_o, prop_mod_sorted)
+        #jensenshannon_dist = wasserstein_2d_grid_pot(matrix_o*weight_matrix, matrix_m*weight_matrix, metric='manhattan') #wasserstein_1_distance_2d_grid(matrix_o, matrix_m) #scipy.stats.wasserstein_distance_nd(matrix_o, matrix_m, u_weights=weight_matrix, v_weights=weight_matrix) #weighted_kl_divergence_symmetric(sorted_prop_time_active_o, prop_mod_sorted, weights=weights) #scipy.special.kl_div(sorted_prop_time_active_o, prop_mod_sorted)
+        jensenshannon_dist = scipy.spatial.distance.jensenshannon(proportions_of_time_active_o, proportions_of_time_active_m)
     #print("done with it")
     linr = scipy.stats.linregress(sorted_prop_time_active_o, prop_mod_sorted)
     if verbose:
@@ -8170,14 +8795,21 @@ def get_max_omega(G):
     return omega
 
 def get_list_of_edge_components(G, eid):
+    #t0 = time.time_ns()
+    
     #edge components stores exclusively tuples of edges which comprise the edge with id = eid
     edge_components = G.getEdgeAttribute("e_comp", str)
-    l = edge_components[eid].split("_")
-    out = []
-    for edge in l:
-        tup = eval(edge)
-        out.append(tup)
-    return out
+    l = edge_components[eid]
+    expr = list(set(eval("[" + l.replace("_", ",") + "]")))
+    #out = []
+    #print(f"gloec --------: {(time.time_ns()-t0)/1000000000}")
+    #t0 = time.time_ns()
+    #for edge in l:
+    #    tup = eval(edge)
+    #    out.append(tup)
+    #print(f"gloec --------: {(time.time_ns()-t0)/1000000000}")
+    #t0 = time.time_ns()
+    return expr
 
 def add_e_comp(G):
     comp = G.attachEdgeAttribute("e_comp", str)
@@ -8284,6 +8916,7 @@ def copy_graph(G_in):
     in_edge_comps = G_in.getEdgeAttribute("e_comp", str)
     in_mu_comps = G_in.getNodeAttribute("mu_comp", str)
     in_lam_comps = G_in.getEdgeAttribute("lambda_comp", str)
+    in_infection_progenitor = G_in.getNodeAttribute("inf_prog", int)
     
     is_active = G.attachNodeAttribute("active", int)
     healing_factor = G.attachNodeAttribute("mu", float)
@@ -8291,7 +8924,9 @@ def copy_graph(G_in):
     edge_components = G.attachEdgeAttribute("e_comp", str)
     mu_components = G.attachNodeAttribute("mu_comp", str)
     lambda_components = G.attachEdgeAttribute("lambda_comp", str)
-    
+    infection_progenitor = G.attachNodeAttribute("inf_prog", int)
+    #for site in G.iterNodes():
+    #    infection_progenitor[site] = site
             
     #add disorder to healing values too if desired
     for edge in G_in.iterEdges():
@@ -8306,7 +8941,7 @@ def copy_graph(G_in):
         is_active[u] = in_activity[u]
         components[u] = in_comp[u]
         mu_components[u] = in_mu_comps[u]
-    
+        infection_progenitor[u] = in_infection_progenitor[u]
     return G
 
 def append_graphs(G0, G1):
@@ -8322,7 +8957,7 @@ def append_graphs(G0, G1):
     in_edge_comps0 = G0.getEdgeAttribute("e_comp", str)
     in_mu_comps0 = G0.getNodeAttribute("mu_comp", str)
     in_lam_comps0 = G0.getEdgeAttribute("lambda_comp", str)
-    
+    in_infection_progenitor0 = G0.getNodeAttribute("inf_prog", int)
     #visualize(G0)
     #print(list(in_edge_comps0))
     #print(f"------ len = {len(list(in_edge_comps0))}")
@@ -8332,6 +8967,7 @@ def append_graphs(G0, G1):
     in_edge_comps1 = G1.getEdgeAttribute("e_comp", str)
     in_mu_comps1 = G1.getNodeAttribute("mu_comp", str)
     in_lam_comps1 = G1.getEdgeAttribute("lambda_comp", str)
+    in_infection_progenitor1 = G1.getNodeAttribute("inf_prog", int)
     
     is_active = G.attachNodeAttribute("active", int)
     healing_factor = G.attachNodeAttribute("mu", float)
@@ -8339,6 +8975,7 @@ def append_graphs(G0, G1):
     edge_components = G.attachEdgeAttribute("e_comp", str)
     mu_components = G.attachNodeAttribute("mu_comp", str)
     lambda_components = G.attachEdgeAttribute("lambda_comp", str)
+    infection_progenitor = G.attachNodeAttribute("inf_prog", int)
     
     for edge in G0.iterEdges():
         #print(edge)
@@ -8367,6 +9004,7 @@ def append_graphs(G0, G1):
         is_active[u] = in_activity0[u]
         components[u] = in_comp0[u]
         mu_components[u] = in_mu_comps0[u]
+        infection_progenitor[u] = in_infection_progenitor0[u]
     
     for u in G1.iterNodes():
         healing_factor[u + L_sq] = in_mu1[u]
@@ -8374,6 +9012,7 @@ def append_graphs(G0, G1):
         #print('n' + str(int(in_mu_comps1[u][1:])+L_sq))
         components[u + L_sq] = str(int(in_comp1[u])+L_sq)
         mu_components[u + L_sq] = 'n' + str(int(in_mu_comps1[u][1:])+L_sq)
+        infection_progenitor[u + L_sq] = in_infection_progenitor1[u]
     
     return G
 
@@ -8620,7 +9259,7 @@ def vis_lat_advanced_memsafe(data, original_graph_size, relaxation_time, G_struc
     #matrix = np.matrix(data.to_numpy())
     
     #print(matrix.shape)
-    total_time_active_list = np.empty(original_graph_size)
+    total_time_active_list = np.empty(original_graph_size*2)
     for site in data:
         
         if site == 0:
@@ -8687,7 +9326,50 @@ def vis_lat_advanced_memsafe(data, original_graph_size, relaxation_time, G_struc
             plt.savefig(f"{title}.png", dpi=600)
         else:
             plt.show()
-   
+    if G_structure == "network":
+       
+        h = math.ceil(math.sqrt(dimensions[0]))
+        w = h
+
+        Z = np.zeros((h,w))
+
+        #first build a bunch of lines/rows
+        for y in range(h):
+            for x in range(w):  
+                Z[x,y] = proportions_of_time_active[x+(y*w)]
+        
+        x = np.arange(w)
+        y = np.arange(h)
+        X, Y = np.meshgrid(x, y)
+        
+        plt.figure()
+        
+        fig, ax = plt.subplots()
+        ax.pcolormesh(x, y, Z, cmap='viridis', vmin=0, vmax=1)
+        L = math.sqrt(original_graph_size)
+        for imp_node in nodes_to_highlight:
+            y_coord = imp_node % w
+            x_coord = imp_node // h
+        
+            ax.scatter([x_coord], [y_coord], color='red', edgecolor='red', s=200/L, zorder=5, label='Point Overlay')
+        
+        #fig.tight_layout()
+        
+        #fig, (ax1, ax2, ax3) = plt.subplots(figsize=(13, 3), ncols=3)
+        
+        # plot just the positive data and save the
+        # color "mappable" object returned by ax1.imshow
+        pos = ax.imshow(Z, cmap='viridis', interpolation='none')
+        
+        # add the colorbar using the figure's method,
+        # telling which mappable we're talking about and
+        # which Axes object it should be near
+        fig.colorbar(pos, ax=ax, spacing='uniform')
+        fig.suptitle(title, fontsize=12)
+        if save_fig:
+            plt.savefig(f"{title}.png", dpi=600)
+        else:
+            plt.show()
  
 def vis_clusters(G_in, L, G_structure, title):
     G = copy_graph(G_in)
@@ -8742,7 +9424,7 @@ def vis_clusters(G_in, L, G_structure, title):
         plt.show()
    
  
-def vis_given_clusters(clusters, L, G_structure, title):
+def vis_given_clusters(clusters, L, G_structure, title, ignore_singletons = False):
     #G = copy_graph(G_in)
     #clusters = get_neil_output(G, verbose=False)
     #matrix = np.matrix(data.to_numpy())
@@ -8768,11 +9450,20 @@ def vis_given_clusters(clusters, L, G_structure, title):
         Z = np.zeros((L, L, 3))
         colors = mcolors.CSS4_COLORS
         #print(colors)
+        count = 0
         for cluster in clusters:
             r = np.random.randint(0, 147)
+            if len(cluster) < 3 and ignore_singletons:
+                r = 0
+            else:
+                count+=1
+                r = count % 146
+                
             rand_color = colors[list(colors)[r]]
             
+            
             cluster_color = mcolors.to_rgb(rand_color)
+            
             #print(cluster_color)
             for node in cluster:
                 y = node // L
@@ -9049,7 +9740,7 @@ def compare_partial_sparsifications(L, seed = -1, lm = True, add_title_data="par
     G_init = scale_mu(G_init, mu_scale)
     #smds = semi_metric_backbone(G_init)
     #print(smds.numberOfEdges())
-    increments = np.linspace(0.25,0.75, 3)
+    increments = np.linspace(0,0.75, 2)
     gsp_list, best_sparsification_percentage = sdrg_sparsify_partial(G_init, 0, True, local_max=lm, return_incremental_sparsifications=True, increments = increments, use_multiplicity=True, get_minimal_sparsification=True)
     
     increments = np.append(increments, best_sparsification_percentage)
@@ -9293,13 +9984,95 @@ def test_sdrg_backbone(L, lm = True, multiplicity=False):
     
     print(f"finished after {time.time()-t0} seconds")
     
-    
 
-def test_sparsities(L, sparsity_levels=[0.9, 0.8, 0.7, 0.6], lm = True, multiplicity=False):
+def viz_graphs(L, sparsity_levels=[0.6], lm = True, multiplicity=False):
+    
+    print(sparsity_levels)
+    increments = [i for i in sparsity_levels]
     t0 = time.time()
     seed = int((time.time_ns()/100)%10000000)
     np.random.seed(seed)
-    add_title_data = "st_sdrg"
+    add_title_data = "sparsities"
+    G_init = generate_square_lattice(L, L)
+    visualize(G_init)
+    
+    #target_number_of_nodes = G_init.numberOfNodes() * sparsity
+    
+    mu_scale = SDRG_crit_point_estimation(G_init, 20)
+    
+    G_init = scale_mu(G_init, mu_scale)
+    
+    
+    
+    sdrg_sparsifications = sdrg_sparsify_partial(G_init, 0.1, False, kawashima=False, local_max=lm, return_incremental_sparsifications=True, increments = increments, use_multiplicity=multiplicity)
+    
+    
+    print(sparsity_levels)
+    
+    print("Finished all SDRG sparsifications! Moving on to simiulations")
+    
+    #this data matrix stores everything; each sublist represents the different sparsification techniques at a single sparsity, so:
+    """
+    for ex
+    [
+        <90%> [sdrg, smds, effr, ...],
+        <80%> [sdrg, smds, effr, ...],
+        ...
+        ]
+    """
+    data_matrix = []
+    num_edges_matrix = []
+    
+    for i in range(len(sparsity_levels)):
+        sparsity = sparsity_levels[i]
+        
+        
+        G_sdrg = sdrg_sparsifications[i]
+        print("- running simulation on sdrg network -")
+        visualize(G_sdrg)
+        
+        
+        n_samples = round(sparsity*G_init.numberOfEdges())
+        
+        print("- running smds for comparison -")
+        gsmds = SMDS_to_n_edges(G_init, n_samples)
+        visualize(gsmds)
+    
+        print("- running effR for comparison -")
+        geffr = copy_graph(G_init)
+        geffr = effective_resistance_sampling_sparsification(geffr, n_samples)
+        visualize(geffr)
+    
+    
+        print("- running uniform for comparison -")
+        guni = copy_graph(G_init)
+        guni = uniform_sampling_sparsification(guni, n_samples) 
+        visualize(guni)
+        
+        print("- running weight sampling for comparison -")
+        gweight = copy_graph(G_init)
+        gweight = weight_sampling_sparsification(gweight, n_samples) #uniform_sampling_sparsification(guni, n_samples) 
+        visualize(gweight)
+        
+        print("- running thresholding for comparison -")
+        gthresh = copy_graph(G_init)
+        gthresh =  threshold_sparsification(gthresh, n_samples) #weight_sampling_sparsification(gweight, n_samples) #uniform_sampling_sparsification(guni, n_samples) 
+        visualize(gthresh)
+        
+            
+    print(f"finished after {time.time()-t0} seconds")
+     
+
+def test_sparsities(L, sparsity_levels=[0.25, 0.4, 0.55, 0.7, 0.85, 0.95], lm = True, multiplicity=False):
+    
+    print(sparsity_levels)
+    
+    increments = [i for i in sparsity_levels]
+    t0 = time.time()
+    seed = int((time.time_ns()/100)%10000000)
+    print(seed)
+    np.random.seed(seed)
+    add_title_data = "sparsities"
     G_init = generate_square_lattice(L, L)
     
     #target_number_of_nodes = G_init.numberOfNodes() * sparsity
@@ -9308,106 +10081,256 @@ def test_sparsities(L, sparsity_levels=[0.9, 0.8, 0.7, 0.6], lm = True, multipli
     
     G_init = scale_mu(G_init, mu_scale)
     
-    G_sdrg = sdrg_sparsify_partial(G_init, 0, True, local_max=lm, return_incremental_sparsifications=False, use_multiplicity=multiplicity)
+    
     spearman_thresh = 0.98
     data_orig, t_orig = fast_dcp_until_quasistationary_memsafe(G_init, G_structure="lattice", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} control {add_title_data}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
     save_data(data_orig, f"L{L}x{L}_s{seed}_control_{add_title_data}")
     
     imp_nodes = []#get_nodes_of_largest_k_clusters(G, 3)
+    sorted_sites = sorted([data_orig[site][0] for site in data_orig])
+    percentile = 0.9
     for site in data_orig:
         #print(ctrl[site])
-        if data_orig[site][0] > t_orig * 0.9:
+        if data_orig[site][0] > sorted_sites[round(percentile*len(sorted_sites))]: #t_orig * 0.9:
             imp_nodes.append(site)
     
     
-    print("- running simulation on sdrg network -")
-    mu_scale = SDRG_crit_point_estimation(G_sdrg, 20)
-    
-    G_sdrg = scale_mu(G_sdrg, mu_scale)
-    
-    data, t_sdrg = fast_dcp_until_quasistationary_memsafe(G_sdrg, G_structure="lattice", original_graph_size=G_sdrg.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} sdrgFull {add_title_data}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
-    save_data(data, f"L{L}x{L}_s{seed}_sdrgFull_{add_title_data}")
-    n_samples = G_sdrg.numberOfEdges()
-    
-    print("- running smds for comparison -")
-    gsmds = semi_metric_backbone(G_init) #SMDS_to_n_edges(G_init, n_samples)
-    data_smds, t_smds = fast_dcp_until_quasistationary_memsafe(gsmds, G_structure="lattice", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} smds {add_title_data}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
-    save_data(data_smds, f"L{L}x{L}_s{seed}_smds_{add_title_data}")
+    sdrg_sparsifications = sdrg_sparsify_partial(G_init, 0.1, False, kawashima=False, local_max=lm, return_incremental_sparsifications=True, increments = increments, use_multiplicity=multiplicity)
     
     
+    print(sparsity_levels)
     
+    print("Finished all SDRG sparsifications! Moving on to simiulations")
     
+    #this data matrix stores everything; each sublist represents the different sparsification techniques at a single sparsity, so:
     """
-    print("- running STsdrg for comparison -")
-    G_stsdrg = shortest_tree_sdrg(G_init, n_samples)
-    
-    data_stsdrg, t_stsdrg = fast_dcp_until_quasistationary_memsafe(G_stsdrg, G_structure="lattice", original_graph_size=G_stsdrg.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} ST_SDRG {add_title_data}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
-    save_data(data_stsdrg, f"L{L}x{L}_s{seed}_STsdrg_{add_title_data}")
+    for ex
+    [
+        <90%> [sdrg, smds, effr, ...],
+        <80%> [sdrg, smds, effr, ...],
+        ...
+        ]
     """
-    print("- running effR for comparison -")
-    geffr = copy_graph(G_init)
-    geffr = effective_resistance_sampling_sparsification(geffr, n_samples)
-    data_effr, t_effr = fast_dcp_until_quasistationary_memsafe(geffr, G_structure="lattice", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} effr {add_title_data}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
-    save_data(data_effr, f"L{L}x{L}_s{seed}_effr_{add_title_data}")
+    data_matrix = []
+    num_edges_matrix = []
     
-    print("- running uniform for comparison -")
-    guni = copy_graph(G_init)
-    guni = uniform_sampling_sparsification(guni, n_samples) 
-    data_uni, t_uni = fast_dcp_until_quasistationary_memsafe(geffr, G_structure="lattice", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} uniform {add_title_data}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
-    save_data(data_uni, f"L{L}x{L}_s{seed}_uniform_{add_title_data}")
+    for i in range(len(sparsity_levels)):
+        sparsity = sparsity_levels[i]
+        
+        
+        G_sdrg = sdrg_sparsifications[i]
+        print("- running simulation on sdrg network -")
+        mu_scale = SDRG_crit_point_estimation(G_sdrg, 20)
+        
+        G_sdrg = scale_mu(G_sdrg, mu_scale)
+        
+        data_sdrg, t_sdrg = fast_dcp_until_quasistationary_memsafe(G_sdrg, G_structure="lattice", original_graph_size=G_sdrg.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} sdrgFull {add_title_data} sparsity={sparsity}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
+        save_data(data_sdrg, f"L{L}x{L}_s{seed}_sdrgFull_{add_title_data}_{sparsity}")
+        
+        n_samples = round(sparsity*G_init.numberOfEdges())
+        
+        print("- running smds for comparison -")
+        gsmds = SMDS_to_n_edges(G_init, n_samples)
+        data_smds, t_smds = fast_dcp_until_quasistationary_memsafe(gsmds, G_structure="lattice", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} smds {add_title_data} sparsity={sparsity}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
+        save_data(data_smds, f"L{L}x{L}_s{seed}_smds_{add_title_data}_{sparsity}")
     
-    print("- running weight sampling for comparison -")
-    gweight = copy_graph(G_init)
-    gweight = weight_sampling_sparsification(gweight, n_samples) #uniform_sampling_sparsification(guni, n_samples) 
-    data_weight, t_weight = fast_dcp_until_quasistationary_memsafe(gweight, G_structure="lattice", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} weighted {add_title_data}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
-    save_data(data_weight, f"L{L}x{L}_s{seed}_weightBased_{add_title_data}")
+        print("- running effR for comparison -")
+        geffr = copy_graph(G_init)
+        geffr = effective_resistance_sampling_sparsification(geffr, n_samples)
+        data_effr, t_effr = fast_dcp_until_quasistationary_memsafe(geffr, G_structure="lattice", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} effr {add_title_data} sparsity={sparsity}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
+        save_data(data_effr, f"L{L}x{L}_s{seed}_effr_{add_title_data}_{sparsity}")
     
-    print("- running thresholding for comparison -")
-    gthresh = copy_graph(G_init)
-    gthresh =  threshold_sparsification(gthresh, n_samples) #weight_sampling_sparsification(gweight, n_samples) #uniform_sampling_sparsification(guni, n_samples) 
-    data_thresh, t_thresh = fast_dcp_until_quasistationary_memsafe(gthresh, G_structure="lattice", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} thresh {add_title_data}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
-    save_data(data_thresh, f"L{L}x{L}_s{seed}_thresholding_{add_title_data}")
+        print("- running uniform for comparison -")
+        guni = copy_graph(G_init)
+        guni = uniform_sampling_sparsification(guni, n_samples) 
+        data_uni, t_uni = fast_dcp_until_quasistationary_memsafe(geffr, G_structure="lattice", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} uniform {add_title_data} sparsity={sparsity}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
+        save_data(data_uni, f"L{L}x{L}_s{seed}_uniform_{add_title_data}_{sparsity}")
+        
+        print("- running weight sampling for comparison -")
+        gweight = copy_graph(G_init)
+        gweight = weight_sampling_sparsification(gweight, n_samples) #uniform_sampling_sparsification(guni, n_samples) 
+        data_weight, t_weight = fast_dcp_until_quasistationary_memsafe(gweight, G_structure="lattice", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} weighted {add_title_data} sparsity={sparsity}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
+        save_data(data_weight, f"L{L}x{L}_s{seed}_weightBased_{add_title_data}_{sparsity}")
+        
+        print("- running thresholding for comparison -")
+        gthresh = copy_graph(G_init)
+        gthresh =  threshold_sparsification(gthresh, n_samples) #weight_sampling_sparsification(gweight, n_samples) #uniform_sampling_sparsification(guni, n_samples) 
+        data_thresh, t_thresh = fast_dcp_until_quasistationary_memsafe(gthresh, G_structure="lattice", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} thresh {add_title_data} sparsity={sparsity}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
+        save_data(data_thresh, f"L{L}x{L}_s{seed}_thresholding_{add_title_data}_{sparsity}")
     
+        data_at_this_sparsity = [data_sdrg, data_smds, data_effr, data_uni, data_weight, data_thresh]
+        data_matrix.append(data_at_this_sparsity)
+        edge_counts = [G_sdrg.numberOfEdges(), gsmds.numberOfEdges(), geffr.numberOfEdges(), guni.numberOfEdges(), gweight.numberOfEdges(), gthresh.numberOfEdges()]
+        num_edges_matrix.append(edge_counts)
+        
+    print(num_edges_matrix)
+    save_data(num_edges_matrix, f"L{L}x{L}_s{seed}_edgeMatrix_{add_title_data}")
+    print(seed)
     print("============================")
     print("===== Final Data Stuff =====")
     print("============================")
     
-    print("- sdrg stats -")
-    print(f"sdrg graph has {G_sdrg.numberOfEdges()} edges")
-
-    sprmn_pval, r_sq, sprmn_rho = spearman_compare_memsafe_diff(data_orig, data, G_sdrg.numberOfNodes(), t_orig, t_sdrg, title=f"ctrl v.s. sdrg", important_nodes=imp_nodes, save_fig=True)
-    
-    
-    """
-    print("- stsdrg stats -")
-    print(f"stsdrg graph has {G_stsdrg.numberOfEdges()} edges")
-
-    sprmn_pval, r_sq, sprmn_rho = spearman_compare_memsafe_diff(data_orig, data_stsdrg, G_stsdrg.numberOfNodes(), t_orig, t_stsdrg, title=f"ctrl v.s. STsdrg", important_nodes=imp_nodes, save_fig=True)
-    """
-    
-    
-    print("- smds stats -")
-    print(f"smds graph has {gsmds.numberOfEdges()} edges")
-    sprmn_pval, r_sq, sprmn_rho = spearman_compare_memsafe_diff(data_orig, data_smds, gsmds.numberOfNodes(), t_orig, t_smds, title=f"ctrl v.s. smds", important_nodes=imp_nodes, save_fig=True)
-    
-    
-    print("- effR stats -")
-    print(f"effR graph has {geffr.numberOfEdges()} edges")
-    sprmn_pval, r_sq, sprmn_rho = spearman_compare_memsafe_diff(data_orig, data_effr, gsmds.numberOfNodes(), t_orig, t_effr, title=f"ctrl v.s. effR", save_fig=True)
-    
-    print("- uniform stats -")
-    print(f"uniform graph has {gweight.numberOfEdges()} edges")
-    sprmn_pval, r_sq, sprmn_rho = spearman_compare_memsafe_diff(data_orig, data_uni, gsmds.numberOfNodes(), t_orig, t_uni, title=f"ctrl v.s. uniform", save_fig=True)
-    
-    print("- weight sampling stats -")
-    print(f"weight sampling graph has {gthresh.numberOfEdges()} edges")
-    sprmn_pval, r_sq, sprmn_rho = spearman_compare_memsafe_diff(data_orig, data_weight, gsmds.numberOfNodes(), t_orig, t_weight, title=f"ctrl v.s. weighted", save_fig=True)
-    
-    print("- thresholding stats -")
-    print(f"thresholding graph has {gsmds.numberOfEdges()} edges")
-    sprmn_pval, r_sq, sprmn_rho = spearman_compare_memsafe_diff(data_orig, data_thresh, gsmds.numberOfNodes(), t_orig, t_thresh, title=f"ctrl v.s. thresh", save_fig=True)
-    
+    for i in range(len(sparsity_levels)): 
+        sparsity = sparsity_levels[i]
+        
+        data_at_this_sparsity = data_matrix[i]
+        edge_counts = num_edges_matrix[i]
+        names = ["SDRG", "SMDS", "effR", "uniform", "weightBased", "thresholding"]
+        
+        data_sdrg = data_at_this_sparsity[0]
+        data_smds = data_at_this_sparsity[1]
+        data_effr = data_at_this_sparsity[2]
+        data_uni = data_at_this_sparsity[3]
+        data_weight = data_at_this_sparsity[4]
+        data_thresh = data_at_this_sparsity[5]
+        
+        print(f"==== {sparsity*100}% of edges remaining data ====")
+        
+        for j in range(len(names)):
+            print(f"- {names[j]} stats -")
+            print(f"{names[j]} graph has {edge_counts[j]} edges")
+            #sp_pval, r_sq, sp_rho, wass, jens = spearman_compare_memsafe_diff(data_orig, data_at_this_sparsity[j], L*L, data_orig[0][2], data_at_this_sparsity[j][0][2], title=f"{L}x{L} ctrl v.s. {names[j]}: seed={seed}", wass_out = True, jensen_out = True, important_nodes = imp_nodes, verbose=True, show_fig=False)
+            
+            
     print(f"finished after {time.time()-t0} seconds")
+    
+
+
+def test_sparsities_net(N, avg_deg, deg_stdev, G_init = None, sparsity_levels=[0.25, 0.4, 0.55, 0.7, 0.85, 0.95], lm = True, multiplicity=False):
+    
+    print(sparsity_levels)
+    
+    increments = [i for i in sparsity_levels]
+    t0 = time.time()
+    seed = int((time.time_ns()/100)%10000000)
+    print(seed)
+    np.random.seed(seed)
+    add_title_data = "sparsities"
+    #G_init = generate_square_lattice(L, L)
+    L=N
+    if G_init is None:
+        G_init = generate_random_graph(N, avg_deg, deg_stdev)
+    
+        
+    #target_number_of_nodes = G_init.numberOfNodes() * sparsity
+    
+    mu_scale = 1#SDRG_crit_point_estimation(G_init, 20)
+    
+    G_init = scale_mu(G_init, mu_scale)
+    
+    
+    spearman_thresh = 0.95
+    data_orig, t_orig = fast_dcp_until_quasistationary_memsafe(G_init, G_structure="network", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} control {add_title_data}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
+    save_data(data_orig, f"L{L}x{L}_s{seed}_control_{add_title_data}")
+    
+    imp_nodes = []#get_nodes_of_largest_k_clusters(G, 3)
+    sorted_sites = sorted([data_orig[site][0] for site in data_orig])
+    percentile = 0.9
+    for site in data_orig:
+        #print(ctrl[site])
+        if data_orig[site][0] > sorted_sites[round(percentile*len(sorted_sites))]: #t_orig * 0.9:
+            imp_nodes.append(site)
+    
+    
+    sdrg_sparsifications = sdrg_sparsify_partial(G_init, 0.1, False, kawashima=False, local_max=lm, return_incremental_sparsifications=True, increments = increments, use_multiplicity=multiplicity)
+    
+    
+    print(sparsity_levels)
+    
+    print("Finished all SDRG sparsifications! Moving on to simiulations")
+    
+    #this data matrix stores everything; each sublist represents the different sparsification techniques at a single sparsity, so:
+    """
+    for ex
+    [
+        <90%> [sdrg, smds, effr, ...],
+        <80%> [sdrg, smds, effr, ...],
+        ...
+        ]
+    """
+    data_matrix = []
+    num_edges_matrix = []
+    
+    for i in range(len(sparsity_levels)):
+        sparsity = sparsity_levels[i]
+        
+        
+        G_sdrg = sdrg_sparsifications[i]
+        print("- running simulation on sdrg network -")
+        mu_scale = SDRG_crit_point_estimation(G_sdrg, 20)
+        
+        G_sdrg = scale_mu(G_sdrg, mu_scale)
+        
+        data_sdrg, t_sdrg = fast_dcp_until_quasistationary_memsafe(G_sdrg, G_structure="network", original_graph_size=G_sdrg.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} sdrgFull {add_title_data} sparsity={sparsity}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
+        save_data(data_sdrg, f"L{L}x{L}_s{seed}_sdrgFull_{add_title_data}_{sparsity}")
+        
+        n_samples = round(sparsity*G_init.numberOfEdges())
+        
+        print("- running smds for comparison -")
+        gsmds = SMDS_to_n_edges(G_init, n_samples)
+        data_smds, t_smds = fast_dcp_until_quasistationary_memsafe(gsmds, G_structure="network", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} smds {add_title_data} sparsity={sparsity}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
+        save_data(data_smds, f"L{L}x{L}_s{seed}_smds_{add_title_data}_{sparsity}")
+    
+        print("- running effR for comparison -")
+        geffr = copy_graph(G_init)
+        geffr = effective_resistance_sampling_sparsification(geffr, n_samples)
+        data_effr, t_effr = fast_dcp_until_quasistationary_memsafe(geffr, G_structure="network", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} effr {add_title_data} sparsity={sparsity}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
+        save_data(data_effr, f"L{L}x{L}_s{seed}_effr_{add_title_data}_{sparsity}")
+    
+        print("- running uniform for comparison -")
+        guni = copy_graph(G_init)
+        guni = uniform_sampling_sparsification(guni, n_samples) 
+        data_uni, t_uni = fast_dcp_until_quasistationary_memsafe(geffr, G_structure="network", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} uniform {add_title_data} sparsity={sparsity}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
+        save_data(data_uni, f"L{L}x{L}_s{seed}_uniform_{add_title_data}_{sparsity}")
+        
+        print("- running weight sampling for comparison -")
+        gweight = copy_graph(G_init)
+        gweight = weight_sampling_sparsification(gweight, n_samples) #uniform_sampling_sparsification(guni, n_samples) 
+        data_weight, t_weight = fast_dcp_until_quasistationary_memsafe(gweight, G_structure="network", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} weighted {add_title_data} sparsity={sparsity}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
+        save_data(data_weight, f"L{L}x{L}_s{seed}_weightBased_{add_title_data}_{sparsity}")
+        
+        print("- running thresholding for comparison -")
+        gthresh = copy_graph(G_init)
+        gthresh =  threshold_sparsification(gthresh, n_samples) #weight_sampling_sparsification(gweight, n_samples) #uniform_sampling_sparsification(guni, n_samples) 
+        data_thresh, t_thresh = fast_dcp_until_quasistationary_memsafe(gthresh, G_structure="network", original_graph_size=G_init.numberOfNodes(), dimensions=[L,L], title=f"{L}x{L} seed={seed} thresh {add_title_data} sparsity={sparsity}", return_time=True, spearman_thresh=spearman_thresh, save_last_state=True, viz=False)
+        save_data(data_thresh, f"L{L}x{L}_s{seed}_thresholding_{add_title_data}_{sparsity}")
+    
+        data_at_this_sparsity = [data_sdrg, data_smds, data_effr, data_uni, data_weight, data_thresh]
+        data_matrix.append(data_at_this_sparsity)
+        edge_counts = [G_sdrg.numberOfEdges(), gsmds.numberOfEdges(), geffr.numberOfEdges(), guni.numberOfEdges(), gweight.numberOfEdges(), gthresh.numberOfEdges()]
+        num_edges_matrix.append(edge_counts)
+        
+    print(num_edges_matrix)
+    save_data(num_edges_matrix, f"L{L}x{L}_s{seed}_edgeMatrix_{add_title_data}")
+    print(seed)
+    print("============================")
+    print("===== Final Data Stuff =====")
+    print("============================")
+    
+    for i in range(len(sparsity_levels)): 
+        sparsity = sparsity_levels[i]
+        
+        data_at_this_sparsity = data_matrix[i]
+        edge_counts = num_edges_matrix[i]
+        names = ["SDRG", "SMDS", "effR", "uniform", "weightBased", "thresholding"]
+        
+        data_sdrg = data_at_this_sparsity[0]
+        data_smds = data_at_this_sparsity[1]
+        data_effr = data_at_this_sparsity[2]
+        data_uni = data_at_this_sparsity[3]
+        data_weight = data_at_this_sparsity[4]
+        data_thresh = data_at_this_sparsity[5]
+        
+        print(f"==== {sparsity*100}% of edges remaining data ====")
+        
+        for j in range(len(names)):
+            print(f"- {names[j]} stats -")
+            print(f"{names[j]} graph has {edge_counts[j]} edges")
+            #sp_pval, r_sq, sp_rho, wass, jens = spearman_compare_memsafe_diff(data_orig, data_at_this_sparsity[j], L*L, data_orig[0][2], data_at_this_sparsity[j][0][2], title=f"{L}x{L} ctrl v.s. {names[j]}: seed={seed}", wass_out = True, jensen_out = True, important_nodes = imp_nodes, verbose=True, show_fig=False)
+            
+            
+    print(f"finished after {time.time()-t0} seconds")
+        
     
     
 def extract_data_text_sdrg_smds_compare():
@@ -9486,9 +10409,12 @@ def extract_data_pickles_compare(L, extra_name=""):
         #G = generate_square_lattice(L, L)
         
         imp_nodes = []#get_nodes_of_largest_k_clusters(G, 3)
+        
+        sorted_sites = sorted([ctrl[site][0] for site in ctrl])
+        
         for site in ctrl:
             #print(ctrl[site])
-            if ctrl[site][0] > rough_t_ctrl * 0.99:
+            if ctrl[site][0] > sorted_sites[round(0.9*len(sorted_sites))]: #rough_t_ctrl * 0.99:
                 imp_nodes.append(site)
                 
         if len(imp_nodes) > 1:
@@ -9595,7 +10521,7 @@ def extract_data_pickles_compare_4(L, extra_name=""):
     
     plt.show()
 
-def extract_data_pickles_compare_all(L, extra_name=""):
+def extract_data_pickles_compare_all(L, num_tests, extra_name=""):
     
     from pathlib import Path
 
@@ -9615,16 +10541,16 @@ def extract_data_pickles_compare_all(L, extra_name=""):
     test_datas = [[], [], [], [], [], [], []]#seven empties, one for each test
     
     #this controls the percentile of activity we examine. 0.0 gives all nodes, 0.95 gives the top 5% by activity, etc.
-    percentile = 0.0
+    percentile = 0.9
     
     bins = np.linspace(0,2, 41)#range(0,1.5,0.05)
-    num_tests = 7
+    #num_tests = 7
     names = ["ctrl", "effr", "sdrg", "smds", "thresh", "uniform", "weight"]
     colors = ["white", "red", "orange", "yellow", "green", "blue", "purple", "black"]
     for file_ind in range(0, len(files)-1, num_tests):
         ctrl_filename = str(files[file_ind])[:-4]
         ctrl = open_data(ctrl_filename)
-        seed = ctrl_filename.split("_")[7]
+        seed = ctrl_filename.split("_")[7] #should be 7
         #"C:\Users\zidda\Documents\Summer 26 Research\SDRG_Sparsification_py\sdrg_sparsification\data_files\L16_pickles_alltests\L16x16_s4239702_control_st_sdrg.pkl"
         seed_num = int(seed[1:])
         np.random.seed(seed_num)
@@ -9636,7 +10562,7 @@ def extract_data_pickles_compare_all(L, extra_name=""):
         for site in ctrl:
             #print(ctrl[site])
             #if a site is in the top 10%
-            if ctrl[site][0] > sorted_sites[round(percentile*len(sorted_sites))]: #rough_t_ctrl * 0.5:
+            if ctrl[site][0] > 0:#sorted_sites[round(percentile*len(sorted_sites))]: #rough_t_ctrl * 0.5:
                 imp_nodes.append(site)
         
         rough_t_ctrl = ctrl[0][2]
@@ -9645,14 +10571,17 @@ def extract_data_pickles_compare_all(L, extra_name=""):
             filename = str(files[file_ind+i])[:-4]
             test_data = open_data(filename)
             rough_t = test_data[0][2]
-            test_name = filename.split("_")[8]
+            test_name = filename.split("_")[8] #should be 8
             #print(test_name)
             #print(test_data[0][0])
         
             #add in any others
             if len(imp_nodes) > 1:
                 #we'll have tp make a function that gets the nearest higher power of two (i.e, possible max time)
-                sp_pval, r_sq, sp_rho, wass, jens = spearman_compare_memsafe_diff(ctrl, test_data, L*L, rough_t_ctrl, rough_t, title=f"{L}x{L} ctrl v.s. {test_name}: seed={seed}", wass_out = True, jensen_out = True, important_nodes = imp_nodes, verbose=False, show_fig=False)
+                try:
+                    sp_pval, r_sq, sp_rho, wass, jens = spearman_compare_memsafe_diff(ctrl, test_data, L*L, rough_t_ctrl, rough_t, title=f"{L}x{L} ctrl v.s. {test_name}: seed={seed}", wass_out = True, jensen_out = True, important_nodes = imp_nodes, verbose=False, show_fig=False)
+                except:
+                    pass    
                 #sp_pval, r_sq, sp_rho_st, wass_st, jens_st = spearman_compare_memsafe_diff(ctrl, st, L*L, rough_t_ctrl, rough_t_st, title=f"{L}x{L} ctrl v.s. st: seed={seed}", wass_out = True, jensen_out = True, important_nodes = imp_nodes, verbose=False, show_fig=False)
                 #sp_pval, r_sq, sp_rho_sm, wass_smds, jens_smds = spearman_compare_memsafe_diff(ctrl, smds, L*L, rough_t_ctrl, rough_t_smds, title=f"{L}x{L} ctrl v.s. smds: seed={seed}", wass_out = True, jensen_out = True, important_nodes = imp_nodes, verbose=False, show_fig=False)
                 
@@ -9692,10 +10621,236 @@ def extract_data_pickles_compare_all(L, extra_name=""):
     plt.show()
          
 
+def extract_data_pickles_compare_all_sparsities(L, num_tests, extra_name=""):
+    
+    from pathlib import Path
+
+    # Replace with your directory path
+    #L = 16
+    dir_path = Path(f'C:/Users/zidda/Documents/Summer 26 Research/SDRG_Sparsification_py/sdrg_sparsification/data_files/L{L}_pickles{extra_name}')
+    
+    
+    # Get all files (ignoring folders)
+    files = [f for f in dir_path.iterdir() if f.is_file()]
+    #print(files)
+    
+    sdrg_data = []
+    smds_data = []
+    st_data = []
+    
+    test_datas = [[], [], [], [], [], [], []]#seven empties, one for each test
+    
+    #this controls the percentile of activity we examine. 0.0 gives all nodes, 0.95 gives the top 5% by activity, etc.
+    percentile = 0.9
+    
+    bins = np.linspace(0,2, 41)#range(0,1.5,0.05)
+    #num_tests = 7
+    names = ["ctrl", "effr", "sdrg", "smds", "thresh", "uniform", "weight"]
+    colors = ["white", "red", "orange", "yellow", "green", "blue", "purple", "black"]
+    for file_ind in range(0, len(files)-1, 50):
+        ctrl_filename = str(files[file_ind])[:-4]
+        ctrl = open_data(ctrl_filename)
+        seed = ctrl_filename.split("_")[7] #should be 7
+        #print(seed)
+        #"C:\Users\zidda\Documents\Summer 26 Research\SDRG_Sparsification_py\sdrg_sparsification\data_files\L16_pickles_alltests\L16x16_s4239702_control_st_sdrg.pkl"
+        seed_num = int(seed[1:])
+        np.random.seed(seed_num)
+        
+        imp_nodes = []#get_nodes_of_largest_k_clusters(G, 3)
+        sorted_sites = sorted([ctrl[site][0] for site in ctrl])
+        
+        #print(sorted_sites[round(0.98*len(sorted_sites))] / rough_t_ctrl)
+        for site in ctrl:
+            #print(ctrl[site])
+            #if a site is in the top 10%
+            if ctrl[site][0] > 0:#sorted_sites[round(percentile*len(sorted_sites))]: #rough_t_ctrl * 0.5:
+                imp_nodes.append(site)
+        
+        rough_t_ctrl = ctrl[0][2]
+        edge_mat_filename = str(files[file_ind+1])[:-4]
+        edge_matrix = open_data(edge_mat_filename)
+        #edgematrix has: sdrg, smds, effr, uniform, weight, thresh
+        #sparsity_ind = 3
+        """for sparsity_ind in range(9):
+            print(edge_matrix[sparsity_ind][2], end="\t")
+            print(edge_matrix[sparsity_ind][0], end="\t")
+            print(edge_matrix[sparsity_ind][1], end="\t")
+            print(edge_matrix[sparsity_ind][5], end="\t")
+            print(edge_matrix[sparsity_ind][3], end="\t")
+            print(edge_matrix[sparsity_ind][4], end="\t")
+            print("\t\t\t\t\t\t\t\t", end="")"""
+        
+        for i in range(4, 50, 8):
+            filename = str(files[file_ind+i])[:-4]
+            test_data = open_data(filename)
+            rough_t = test_data[0][2]
+            test_name = filename.split("_")[8] #should be 8
+            #print(test_name, end="-")
+            #print(test_name)
+            #print(test_data[0][0])
+        
+            #add in any others
+            
+            sp_pval, r_sq, sp_rho, wass, jens = spearman_compare_memsafe_diff(ctrl, test_data, L*L, rough_t_ctrl, rough_t, title=f"{L}x{L} ctrl v.s. {test_name}: seed={seed}", wass_out = True, jensen_out = True, important_nodes = imp_nodes, verbose=False, show_fig=False)
+            print(f"{jens}", end="\t")
+            #sp_pval, r_sq, sp_rho_st, wass_st, jens_st = spearman_compare_memsafe_diff(ctrl, st, L*L, rough_t_ctrl, rough_t_st, title=f"{L}x{L} ctrl v.s. st: seed={seed}", wass_out = True, jensen_out = True, important_nodes = imp_nodes, verbose=False, show_fig=False)
+            #sp_pval, r_sq, sp_rho_sm, wass_smds, jens_smds = spearman_compare_memsafe_diff(ctrl, smds, L*L, rough_t_ctrl, rough_t_smds, title=f"{L}x{L} ctrl v.s. smds: seed={seed}", wass_out = True, jensen_out = True, important_nodes = imp_nodes, verbose=False, show_fig=False)
+            
+            #vis_clusters(G, L, "lattice", f"{L}x{L} clusters: seed={seed_num}")
+            
+            #vis_lat_advanced_memsafe(ctrl, L*L, rough_t_ctrl, "lattice", [L, L], f"{L}x{L} ctrl: seed={seed_num}", nodes_to_highlight=imp_nodes)
+            #vis_lat_advanced_memsafe(sdrg, L*L, rough_t_sdrg, "lattice", [L, L], f"{L}x{L} sdrg: seed={seed_num}", nodes_to_highlight=imp_nodes)
+            #vis_lat_advanced_memsafe(smds, L*L, rough_t_smds, "lattice", [L, L], f"{L}x{L} smds: seed={seed_num}", nodes_to_highlight=imp_nodes)
+            #print(f"-- {seed_num} --")
+            #print(f"{rough_t_ctrl}\t{rough_t_sdrg}\t{rough_t_smds}")
+            #print(f"{sp_rho_sd}\t{sp_rho_sm}")
+            #print(f"{round(jens, 3)}", end="\t")
+            
+            if jens == 0:
+                jens = 100
+                print(test_name)
+            
+            #test_datas[i].append(jens)
+            #sdrg_data.append(jens_sdrg)
+            #smds_data.append(jens_smds)
+            #st_data.append(jens_st)
+            #print(f"{wass_sdrg}\t{wass_smds}")
+        print("")
+        
+    
+    #print(sdrg_data)
+    for i in range(num_tests):
+        sns.histplot(test_datas[i], bins=bins, color=colors[i], label=names[i], alpha=0.4, element="step")
+    #sns.histplot(smds_data, bins=bins, color="orange", label="SMDS", alpha=0.4, element="step")
+    
+    # 4. Finalize the chart details
+    plt.xlabel(f"Wasserstein Distance - Most Active {(1-percentile)*100}%")
+    plt.ylabel("Frequency")
+    plt.title("Quasistationary Wasserstein Distance from Control")
+    plt.legend(loc="upper right")
+    
+    plt.show()
+         
+
+def extract_data_pickles_compare_all_sparsities_increments(L, num_tests, extra_name=""):
+    
+    from pathlib import Path
+    increments = [0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85, 0.95]
+    already_done = 0
+    for inc in range(2+already_done, len(increments)+2):
+        print("=================================")
+        print(f"=============={increments[inc-2]}==============")
+        print("=================================")
+        # Replace with your directory path
+        #L = 16
+        dir_path = Path(f'C:/Users/zidda/Documents/Summer 26 Research/SDRG_Sparsification_py/sdrg_sparsification/data_files/L{L}_pickles{extra_name}')
+        
+        
+        # Get all files (ignoring folders)
+        files = [f for f in dir_path.iterdir() if f.is_file()]
+        #print(files)
+        
+        sdrg_data = []
+        smds_data = []
+        st_data = []
+        
+        test_datas = [[], [], [], [], [], [], []]#seven empties, one for each test
+        
+        #this controls the percentile of activity we examine. 0.0 gives all nodes, 0.95 gives the top 5% by activity, etc.
+        percentile = 0.95
+        
+        bins = np.linspace(0,2, 41)#range(0,1.5,0.05)
+        #num_tests = 7
+        names = ["ctrl", "effr", "sdrg", "smds", "thresh", "uniform", "weight"]
+        colors = ["white", "red", "orange", "yellow", "green", "blue", "purple", "black"]
+        for file_ind in range(0, len(files)-1, 50):
+            ctrl_filename = str(files[file_ind])[:-4]
+            ctrl = open_data(ctrl_filename)
+            seed = ctrl_filename.split("_")[7] #should be 7
+            #print(seed)
+            #"C:\Users\zidda\Documents\Summer 26 Research\SDRG_Sparsification_py\sdrg_sparsification\data_files\L16_pickles_alltests\L16x16_s4239702_control_st_sdrg.pkl"
+            seed_num = int(seed[1:])
+            np.random.seed(seed_num)
+            
+            imp_nodes = []#get_nodes_of_largest_k_clusters(G, 3)
+            sorted_sites = sorted([ctrl[site][0] for site in ctrl])
+            
+            #print(sorted_sites[round(0.98*len(sorted_sites))] / rough_t_ctrl)
+            for site in ctrl:
+                #print(ctrl[site])
+                #if a site is in the top 10%
+                if ctrl[site][0] > 0:#sorted_sites[round(percentile*len(sorted_sites))]: #rough_t_ctrl * 0.5:
+                    imp_nodes.append(site)
+            
+            rough_t_ctrl = ctrl[0][2]
+            edge_mat_filename = str(files[file_ind+1])[:-4]
+            edge_matrix = open_data(edge_mat_filename)
+            #edgematrix has: sdrg, smds, effr, uniform, weight, thresh
+            #sparsity_ind = 3
+            """for sparsity_ind in range(9):
+                print(edge_matrix[sparsity_ind][2], end="\t")
+                print(edge_matrix[sparsity_ind][0], end="\t")
+                print(edge_matrix[sparsity_ind][1], end="\t")
+                print(edge_matrix[sparsity_ind][5], end="\t")
+                print(edge_matrix[sparsity_ind][3], end="\t")
+                print(edge_matrix[sparsity_ind][4], end="\t")
+                print("\t\t\t\t\t\t\t\t", end="")"""
+            
+            for i in range(inc, 50, 8):
+                filename = str(files[file_ind+i])[:-4]
+                test_data = open_data(filename)
+                rough_t = test_data[0][2]
+                test_name = filename.split("_")[8] #should be 8
+                #print(test_name, end="-")
+                #print(test_name)
+                #print(test_data[0][0])
+            
+                #add in any others
+                
+                sp_pval, r_sq, sp_rho, wass, jens = spearman_compare_memsafe_diff(ctrl, test_data, L*L, rough_t_ctrl, rough_t, title=f"{L}x{L} ctrl v.s. {test_name}: seed={seed}", wass_out = True, jensen_out = True, important_nodes = imp_nodes, verbose=False, show_fig=False)
+                print(f"{jens}", end="\t")
+                #sp_pval, r_sq, sp_rho_st, wass_st, jens_st = spearman_compare_memsafe_diff(ctrl, st, L*L, rough_t_ctrl, rough_t_st, title=f"{L}x{L} ctrl v.s. st: seed={seed}", wass_out = True, jensen_out = True, important_nodes = imp_nodes, verbose=False, show_fig=False)
+                #sp_pval, r_sq, sp_rho_sm, wass_smds, jens_smds = spearman_compare_memsafe_diff(ctrl, smds, L*L, rough_t_ctrl, rough_t_smds, title=f"{L}x{L} ctrl v.s. smds: seed={seed}", wass_out = True, jensen_out = True, important_nodes = imp_nodes, verbose=False, show_fig=False)
+                
+                #vis_clusters(G, L, "lattice", f"{L}x{L} clusters: seed={seed_num}")
+                
+                #vis_lat_advanced_memsafe(ctrl, L*L, rough_t_ctrl, "lattice", [L, L], f"{L}x{L} ctrl: seed={seed_num}", nodes_to_highlight=imp_nodes)
+                #vis_lat_advanced_memsafe(sdrg, L*L, rough_t_sdrg, "lattice", [L, L], f"{L}x{L} sdrg: seed={seed_num}", nodes_to_highlight=imp_nodes)
+                #vis_lat_advanced_memsafe(smds, L*L, rough_t_smds, "lattice", [L, L], f"{L}x{L} smds: seed={seed_num}", nodes_to_highlight=imp_nodes)
+                #print(f"-- {seed_num} --")
+                #print(f"{rough_t_ctrl}\t{rough_t_sdrg}\t{rough_t_smds}")
+                #print(f"{sp_rho_sd}\t{sp_rho_sm}")
+                #print(f"{round(jens, 3)}", end="\t")
+                
+                if jens == 0:
+                    jens = 100
+                    print(test_name)
+                
+                #test_datas[i].append(jens)
+                #sdrg_data.append(jens_sdrg)
+                #smds_data.append(jens_smds)
+                #st_data.append(jens_st)
+                #print(f"{wass_sdrg}\t{wass_smds}")
+            print("")
+            
+        
+        #print(sdrg_data)
+        for i in range(num_tests):
+            sns.histplot(test_datas[i], bins=bins, color=colors[i], label=names[i], alpha=0.4, element="step")
+        #sns.histplot(smds_data, bins=bins, color="orange", label="SMDS", alpha=0.4, element="step")
+        
+        # 4. Finalize the chart details
+        plt.xlabel(f"Wasserstein Distance - Most Active {(1-percentile)*100}%")
+        plt.ylabel("Frequency")
+        plt.title("Quasistationary Wasserstein Distance from Control")
+        plt.legend(loc="upper right")
+        
+        plt.show()
+
 #C:\Users\zidda\Documents\Summer 26 Research\SDRG_Sparsification_py\sdrg_sparsification\data_files\L32_pickles\L32x32_s12806_control_backbone_test.pkl
 
 #test11(4, 1)
-#test_sdrg_backbone(16)
+#test_sparsities(32)
 #for i in range(3):
     #print(f"starting test number {i}")
     #print(f"{time.localtime()[3]}hrs : {time.localtime()[4]}m : {time.localtime()[5]}s")
